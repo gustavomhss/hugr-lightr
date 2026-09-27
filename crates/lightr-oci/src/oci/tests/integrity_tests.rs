@@ -62,16 +62,24 @@ fn test_absolute_and_parent_symlink_targets_are_opaque() {
         let layout_dir = make_layout(tmp.path(), &[make_symlink_layer(target, false)]);
         let name = format!("symlink-{suffix}");
         import_layout(&layout_dir, &store, &name).unwrap();
-        let hydrate = tmp.path().join(format!("hydrate-{suffix}"));
-        fs::create_dir(&hydrate).unwrap();
-        lightr_index::hydrate(&hydrate, &store, &name).unwrap();
+        let hydrate_dir = tmp.path().join(format!("hydrated-{suffix}"));
+        fs::create_dir_all(&hydrate_dir).unwrap();
+        lightr_index::hydrate(&hydrate_dir, &store, &name).unwrap();
+        assert!(
+            fs::symlink_metadata(hydrate_dir.join("link"))
+                .unwrap()
+                .file_type()
+                .is_symlink(),
+            "{suffix} target must remain a symlink"
+        );
         assert_eq!(
-            fs::read_link(hydrate.join("link")).unwrap(),
+            fs::read_link(hydrate_dir.join("link")).unwrap(),
             Path::new(target)
         );
     }
 }
 
+#[cfg(unix)]
 #[test]
 fn test_write_through_symlink_component_rejects_import_without_ref() {
     let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
@@ -95,6 +103,19 @@ fn test_write_through_symlink_component_rejects_import_without_ref() {
         "rejected symlink-component import must not publish ref"
     );
     assert_eq!(fs::read(&sentinel).unwrap(), b"outside remains");
+}
+
+#[cfg(not(unix))]
+#[test]
+fn test_oci_symlink_import_is_unsupported_without_ref() {
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let tmp = TempDir::new().unwrap();
+    let (_home, store) = tmp_store_and_home();
+    let layout_dir = make_layout(tmp.path(), &[make_symlink_layer("/bin/busybox", false)]);
+    let result = import_layout(&layout_dir, &store, "unsupported-symlink");
+
+    assert!(matches!(result, Err(LightrError::Unsupported(_))));
+    assert!(store.ref_get("unsupported-symlink").unwrap().is_none());
 }
 
 #[cfg(unix)]
