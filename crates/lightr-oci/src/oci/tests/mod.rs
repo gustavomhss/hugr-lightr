@@ -6,6 +6,8 @@ mod integrity_tests;
 mod pull_tests;
 mod push_tests;
 mod retain_tests;
+#[cfg(windows)]
+mod windows_import_tests;
 
 use crate::oci::util::{host_arch, sha256_hex_of};
 use flate2::{write::GzEncoder, Compression};

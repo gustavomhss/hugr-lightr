@@ -3,6 +3,7 @@
 use super::http::{
     net_agent, read_creds_for_registry, read_response_bytes, retry_request, stream_blob_to_file,
 };
+use super::import::preflight_oci_layer_import;
 use super::layer::{apply_and_snapshot, LayerBlob};
 use super::model::{ImportReport, ManifestList, OciManifest};
 use super::reference::{fetch_docker_token, parse_image_ref, pick_from_manifest_list};
@@ -22,6 +23,7 @@ use std::fs;
 ///   - Typed errors: 401/403 → Registry/auth, 404 → Registry/not-found, etc.
 ///   - Multi-arch: picks only linux/<host>; S2 has no emulation fallback.
 pub fn pull(image: &str, store: &Store, name: &str) -> Result<ImportReport> {
+    preflight_oci_layer_import()?;
     // Validate/parse image ref; reject empty/malformed refs → InvalidRef → exit 2.
     let (registry, repo, tag) = parse_image_ref(image)?;
     let agent = net_agent();

@@ -130,6 +130,7 @@ pub(crate) fn lightr_materialize_ms(home: &Path, size: MaterializeSize) -> Optio
 /// setup), then time the CoW hydrate (median-of-N, fresh dest per sample). Returns
 /// None (→ honest Na) if the store/pull setup fails — never a fabricated number.
 pub(crate) fn lightr_cold_image_ms(home: &Path) -> Option<f64> {
+    lightr_oci::preflight_oci_layer_import().ok()?;
     let store_root = home.join("store");
     let store = lightr_store::Store::open(&store_root).ok()?;
     // SETUP (untimed): ingest the real image into CAS under a bench ref.

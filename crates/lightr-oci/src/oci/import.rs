@@ -17,6 +17,25 @@ use std::{
     path::Path,
 };
 
+#[cfg(windows)]
+pub(super) const WINDOWS_LAYER_IMPORT_UNSUPPORTED: &str =
+    "OCI layer import is unsupported on Windows (ADR-0021)";
+
+/// Windows must reject before any input, staging, or store operation. OCI
+/// layers need link semantics that ADR-0021 forbids emulating by copy or skip.
+pub fn preflight_oci_layer_import() -> Result<()> {
+    #[cfg(windows)]
+    {
+        Err(LightrError::Unsupported(
+            WINDOWS_LAYER_IMPORT_UNSUPPORTED.to_string(),
+        ))
+    }
+    #[cfg(not(windows))]
+    {
+        Ok(())
+    }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // import_layout — OCI layout dir or docker-save tar
 // ─────────────────────────────────────────────────────────────────────────────
@@ -29,6 +48,7 @@ use std::{
 /// All layer blobs are verified via real SHA-256 before being applied
 /// (fail-closed; mismatch ⇒ `LightrError::Integrity`).
 pub fn import_layout(path: &Path, store: &Store, name: &str) -> Result<ImportReport> {
+    preflight_oci_layer_import()?;
     if path.is_dir() {
         import_oci_layout_dir(path, store, name)
     } else {

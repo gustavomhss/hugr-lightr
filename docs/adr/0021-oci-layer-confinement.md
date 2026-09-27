@@ -26,12 +26,13 @@ Its fallback remains unchanged for every other ADR-0017 scope.
 
 macOS and Linux OCI confinement are target release scope, pending implementation
 and evidence under issue #242; this ADR makes no shipped-behavior claim. Windows
-OCI layer import must return explicit `Unsupported` for that release until a
-separate native Windows qualification wave is accepted. Enforcement is pending a
-separate PR; this ADR makes no claim that current code returns `Unsupported`.
-It must not copy, skip, synthesize, or otherwise fall back while unsupported. This
-supersedes prior Windows-full and privilege decisions only for release timing;
-their fail-closed requirement remains binding.
+OCI layer import returns explicit `Unsupported` before input read, staging, or
+store mutation. CLI and CRI callers execute this preflight before opening their
+stores. This remains in effect until a separate native Windows qualification wave
+is accepted.
+It must not copy, skip, synthesize, or otherwise fall back while unsupported.
+This supersedes prior Windows-full and privilege decisions only for release
+timing; their fail-closed requirement remains binding.
 
 ### Unix layer apply
 
@@ -59,8 +60,7 @@ traversal or link safety requirements above.
 ### Future Windows layer apply
 
 Windows privileged-handle implementation and native runtime qualification are
-future work, not release blockers. Required `Unsupported` enforcement remains
-pending its separate PR. Once Windows OCI import is qualified, it must:
+future work, not release blockers. Once Windows OCI import is qualified, it must:
 
 1. Traverse descendants relative to named, opened directory handles. Every opened
    component forbids reparse points; no path-based check/use sequence is valid.
@@ -90,8 +90,8 @@ explicitly. It must never silently weaken link safety or change layer
 representation. Existing path traversal, symlink-component, hardlink-escape, and
 whiteout/delete mutation probes remain required evidence under issue #242.
 
-Windows `Unsupported` behavior is required for this release but pending
-enforcement; current code is not claimed to implement it. Cross-compilation,
-static review, and non-Windows tests are not native Windows runtime qualification.
-A later qualified implementation must meet the future Windows layer-apply
-requirements above; it must not introduce a copy fallback.
+Windows `Unsupported` behavior is enforced at layout, docker-save/load, and pull
+entry points. Native Windows CI executes the rejection test; it is enforcement
+evidence, not native Windows layer-apply qualification. A later qualified
+implementation must meet the future Windows layer-apply requirements above; it
+must not introduce a copy fallback.

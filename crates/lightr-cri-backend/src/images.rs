@@ -86,6 +86,7 @@ impl LightrBackend {
             )));
         }
         let store_name = sanitize_ref(image_ref);
+        lightr_oci::preflight_oci_layer_import().map_err(map_lightr_err)?;
         let store = self.store()?;
         let report = lightr_oci::pull(image_ref, &store, &store_name).map_err(map_lightr_err)?;
         let root_hex = report.root.to_hex();

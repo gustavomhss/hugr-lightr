@@ -422,6 +422,12 @@ jobs:
       - name: Native windows build (msvc)
         run: cargo build --release --workspace --target x86_64-pc-windows-msvc
 
+      - name: Test Windows OCI layer-import gate
+        run: |
+          cargo test -p lightr-oci --lib windows_import_tests
+          $env:CARGO_BIN_EXE_lightr = "$PWD\target\x86_64-pc-windows-msvc\release\lightr.exe"
+          cargo test -p lightr-acceptance --test windows_oci_import
+
       - name: clippy (deny warnings) - windows-msvc
         run: cargo clippy --workspace --all-targets --target x86_64-pc-windows-msvc -- -D warnings -A unused-imports -A unused-variables -A dead_code
 

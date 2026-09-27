@@ -17,7 +17,7 @@
 //! `history` verb, and the shared report types.
 
 use lightr_core::validate_ref_name;
-use lightr_oci::{import_layout, pull, push};
+use lightr_oci::{import_layout, preflight_oci_layer_import, pull, push};
 use lightr_store::Store;
 use serde::Serialize;
 
@@ -70,6 +70,9 @@ pub fn import(path: &str, name: &str, json: bool) -> i32 {
     if let Err(e) = validate_ref_name(name) {
         return die_lightr(&e);
     }
+    if let Err(e) = preflight_oci_layer_import() {
+        return die_lightr(&e);
+    }
 
     let store = match Store::open(Store::default_root()) {
         Ok(s) => s,
@@ -91,6 +94,9 @@ pub fn import(path: &str, name: &str, json: bool) -> i32 {
 pub fn pull_image(image: &str, name: &str, json: bool) -> i32 {
     // Validate ref name — exit 2 on invalid
     if let Err(e) = validate_ref_name(name) {
+        return die_lightr(&e);
+    }
+    if let Err(e) = preflight_oci_layer_import() {
         return die_lightr(&e);
     }
 

@@ -43,6 +43,7 @@ mod oci;
 pub use oci::history::{image_history, HistoryRow, MISSING};
 pub use oci::images::{list_images, ImageRow};
 pub use oci::import::import_layout;
+pub use oci::import::preflight_oci_layer_import;
 pub use oci::load::load;
 pub use oci::model::{ImportReport, LoadReport, PushReport, SaveReport};
 pub use oci::pull::pull;

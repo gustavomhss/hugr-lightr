@@ -125,6 +125,10 @@ pub fn save(store_ref: &str, output: Option<&str>) -> i32 {
 /// stays clean). Fail-closed: a malformed/absent tar → exit 1; an unsanitizable
 /// tag → exit 2.
 pub fn load(input: Option<&str>) -> i32 {
+    if let Err(e) = lightr_oci::preflight_oci_layer_import() {
+        return die_lightr(&e);
+    }
+
     let store = match Store::open(Store::default_root()) {
         Ok(s) => s,
         Err(e) => return die_lightr(&e),

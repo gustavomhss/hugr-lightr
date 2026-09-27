@@ -18,7 +18,7 @@
 //! import path (`Io` → exit 1, `InvalidManifest` → exit 1); a tar whose only
 //! candidate name is unsanitizable is `InvalidRef` (exit 2).
 
-use super::import::import_layout;
+use super::import::{import_layout, preflight_oci_layer_import};
 use super::model::{DockerSaveItem, LoadReport};
 use super::util::{sha256_hex_of, TempDirGuard};
 use flate2::read::GzDecoder;
@@ -45,6 +45,7 @@ const LOAD_NS: &str = "@loaded/";
 /// Fail-closed: an unreadable input is `Io` (exit 1); a tar without a parseable
 /// `manifest.json` is `InvalidManifest` (exit 1) via `import_layout`.
 pub fn load(input: Option<&Path>, store: &Store) -> Result<LoadReport> {
+    preflight_oci_layer_import()?;
     let raw = read_input(input)?;
 
     // Discover the ref name BEFORE import (RepoTags from manifest.json).
