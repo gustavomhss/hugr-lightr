@@ -6,6 +6,7 @@
 pub mod ac;
 pub mod cas;
 pub mod cow;
+pub mod image_ref;
 pub mod imgmeta;
 pub mod lock;
 pub mod refs;

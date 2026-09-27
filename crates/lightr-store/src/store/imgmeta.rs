@@ -53,7 +53,7 @@ pub struct ImageManifestRecord {
 // clean InvalidManifest error rather than a panic.
 
 #[path = "imgmeta_codec.rs"]
-mod codec;
+pub(crate) mod codec;
 use codec::{decode_manifest_record, encode_manifest_record};
 
 // ── path helper ───────────────────────────────────────────────────────────────
@@ -95,6 +95,19 @@ pub fn image_config_put(root: &Path, name: &str, config_bytes: &[u8]) -> Result<
 /// (fail-soft to the minimal config, never an error).
 pub fn image_config_get(root: &Path, name: &str) -> Result<Option<Vec<u8>>> {
     lightr_core::validate_ref_name(name)?;
+    if let Some(envelope) = super::image_ref::envelope_for(root, name)? {
+        return envelope
+            .prepared
+            .config
+            .map(|d| {
+                get_bytes(root, &d).map_err(|e| {
+                    lightr_core::LightrError::InvalidManifest(format!(
+                        "malformed LOCIE1 envelope: missing or invalid pointed-to CAS body: {e}"
+                    ))
+                })
+            })
+            .transpose();
+    }
     let key = lightr_core::ref_key(name);
     let path = imgmeta_path(root, &key);
     if !path.exists() {
@@ -229,6 +242,24 @@ pub fn image_manifest_put(root: &Path, name: &str, rec: &ImageManifestRecord) ->
 /// a faithful-push never silently emits a wrong manifest).
 pub fn image_manifest_get(root: &Path, name: &str) -> Result<Option<ImageManifestRecord>> {
     lightr_core::validate_ref_name(name)?;
+    if let Some(envelope) = super::image_ref::envelope_for(root, name)? {
+        return envelope
+            .prepared
+            .manifest
+            .map(|d| {
+                let body = get_bytes(root, &d).map_err(|e| {
+                    lightr_core::LightrError::InvalidManifest(format!(
+                        "malformed LOCIE1 envelope: missing or invalid pointed-to CAS body: {e}"
+                    ))
+                })?;
+                decode_manifest_record(&body).map_err(|e| {
+                    lightr_core::LightrError::InvalidManifest(format!(
+                        "malformed LOCIE1 envelope: invalid manifest body: {e}"
+                    ))
+                })
+            })
+            .transpose();
+    }
     let key = lightr_core::ref_key(name);
     let path = imgmanifest_path(root, &key);
     if !path.exists() {

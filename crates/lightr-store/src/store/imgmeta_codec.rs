@@ -6,7 +6,7 @@ use lightr_core::{Digest, LightrError, Result};
 
 const IMG_MANIFEST_CODEC_VERSION: u32 = 1;
 
-pub(super) fn encode_manifest_record(rec: &ImageManifestRecord) -> Vec<u8> {
+pub(crate) fn encode_manifest_record(rec: &ImageManifestRecord) -> Vec<u8> {
     let mut out = Vec::new();
     out.extend_from_slice(&IMG_MANIFEST_CODEC_VERSION.to_le_bytes());
     out.extend_from_slice(&(rec.manifest_bytes.len() as u64).to_le_bytes());
@@ -68,7 +68,7 @@ impl<'a> Reader<'a> {
     }
 }
 
-pub(super) fn decode_manifest_record(bytes: &[u8]) -> Result<ImageManifestRecord> {
+pub(crate) fn decode_manifest_record(bytes: &[u8]) -> Result<ImageManifestRecord> {
     let mut r = Reader::new(bytes);
     let version = r.u32()?;
     if version != IMG_MANIFEST_CODEC_VERSION {
@@ -92,6 +92,11 @@ pub(super) fn decode_manifest_record(bytes: &[u8]) -> Result<ImageManifestRecord
             digest,
             size,
         });
+    }
+    if r.pos != bytes.len() {
+        return Err(LightrError::InvalidManifest(
+            "trailing bytes in image manifest record".into(),
+        ));
     }
     Ok(ImageManifestRecord {
         manifest_bytes,

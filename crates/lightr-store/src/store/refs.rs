@@ -45,13 +45,35 @@ pub fn ref_get(root: &Path, name: &str) -> Result<Option<RefRecord>> {
         return Ok(None);
     }
     let bytes = fs::read(&path)?;
+    if let Some(envelope) = super::image_ref::decode_envelope(&bytes)? {
+        if envelope.record.name != name {
+            return Err(lightr_core::LightrError::InvalidManifest(
+                "malformed LOCIE1 envelope: ref name does not match storage key".into(),
+            ));
+        }
+        super::image_ref::validate_bodies(root, &envelope)?;
+        return Ok(Some(envelope.record));
+    }
     let rec = RefRecord::decode(&bytes)?;
+    lightr_core::validate_ref_name(&rec.name)?;
+    if rec.name != name {
+        return Err(lightr_core::LightrError::InvalidManifest(
+            "legacy ref name does not match storage key".into(),
+        ));
+    }
     Ok(Some(rec))
 }
 
 /// Write a ref atomically (last-write-wins).
 /// R1 extension: also writes a name record (once) and appends a log entry.
 pub fn ref_put(root: &Path, rec: &RefRecord) -> Result<()> {
+    ref_put_encoded(root, rec, &rec.encode())
+}
+
+/// Write current ref bytes after updating compatibility name/history records.
+/// Envelope publication uses this to retain ref writer behaviour while making
+/// only current-ref replacement its visibility point.
+pub(super) fn ref_put_encoded(root: &Path, rec: &RefRecord, data: &[u8]) -> Result<()> {
     let _wg = write_guard(root)?;
     lightr_core::validate_ref_name(&rec.name)?;
     let key = lightr_core::ref_key(&rec.name);
@@ -86,15 +108,14 @@ pub fn ref_put(root: &Path, rec: &RefRecord) -> Result<()> {
 
     // 3. Atomic-write log entry <n>.
     let log_entry_path = log_dir.join(next_n.to_string());
-    let data = rec.encode();
-    atomic_write(&log_dir, &log_entry_path, &data)?;
+    atomic_write(&log_dir, &log_entry_path, &rec.encode())?;
 
     // 4. Atomic-write the current ref file (LWW).
     let path = ref_path(root, &key);
     let hex = key.to_hex();
     let (pre, _) = shard_parts(&hex);
     let shard = root.join("refs").join(pre);
-    atomic_write(&shard, &path, &data)?;
+    atomic_write(&shard, &path, data)?;
 
     Ok(())
 }

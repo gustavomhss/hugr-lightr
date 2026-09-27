@@ -2,12 +2,23 @@
 //! `imgmeta.rs` via `#[path]` to keep both files under the 400-LOC godfile cap.
 
 use crate::Store;
+use lightr_core::{Digest, RefRecord};
 use tempfile::TempDir;
 
 fn tmp_store() -> (TempDir, Store) {
     let dir = TempDir::new().unwrap();
     let store = Store::open(dir.path().join("store")).unwrap();
     (dir, store)
+}
+
+fn legacy_ref(name: &str) -> RefRecord {
+    RefRecord {
+        name: name.into(),
+        root: Digest::of_bytes(name.as_bytes()),
+        parent: None,
+        created_at_unix: 0,
+        tool_version: "test".into(),
+    }
 }
 
 // ── image_config sidecar (push-fidelity) ──────────────────────────────────
@@ -19,6 +30,7 @@ fn image_config_roundtrip_and_absent_is_none() {
     assert!(store.image_config_get("noconfig").unwrap().is_none());
     // Put + get roundtrips the exact bytes (content-addressed in the CAS).
     let cfg = br#"{"architecture":"amd64","os":"linux","config":{"Cmd":["sh"]}}"#;
+    store.ref_put(&legacy_ref("img")).unwrap();
     store.image_config_put("img", cfg).unwrap();
     assert_eq!(
         store.image_config_get("img").unwrap().as_deref(),
@@ -60,6 +72,7 @@ fn image_manifest_record_roundtrip_and_absent_is_none() {
         ],
         platform: "linux/amd64".to_string(),
     };
+    store.ref_put(&legacy_ref("mani")).unwrap();
     store.image_manifest_put("mani", &rec).unwrap();
     let got = store.image_manifest_get("mani").unwrap().unwrap();
     assert_eq!(got, rec, "record must survive the length-prefixed codec");
@@ -72,4 +85,23 @@ fn image_manifest_record_roundtrip_and_absent_is_none() {
     };
     store.image_manifest_put("mani", &rec2).unwrap();
     assert_eq!(store.image_manifest_get("mani").unwrap().unwrap(), rec2);
+}
+
+#[test]
+fn image_manifest_record_rejects_trailing_bytes() {
+    use crate::store::imgmeta::{
+        codec::decode_manifest_record, codec::encode_manifest_record, ImageManifestRecord,
+    };
+    use lightr_core::LightrError;
+
+    let mut bytes = encode_manifest_record(&ImageManifestRecord {
+        manifest_bytes: vec![],
+        descriptors: vec![],
+        platform: String::new(),
+    });
+    bytes.push(0);
+    assert!(matches!(
+        decode_manifest_record(&bytes),
+        Err(LightrError::InvalidManifest(message)) if message == "trailing bytes in image manifest record"
+    ));
 }

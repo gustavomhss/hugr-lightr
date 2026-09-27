@@ -11,6 +11,7 @@ pub mod store;
 
 // Re-export the public surface that was previously flat in lib.rs.
 pub use store::cow::CowRung;
+pub use store::image_ref::{ImageRef, PreparedImageRef};
 pub use store::imgmeta::{ImageDescriptor, ImageManifestRecord};
 pub use store::lock::{GcGuard, WriteGuard};
 pub use store::usage::StoreUsage;
@@ -157,6 +158,33 @@ impl Store {
     /// `Ok(true)` if it existed and was removed.
     pub fn ref_remove(&self, name: &str) -> Result<bool> {
         store::refs::ref_remove(&self.root, name)
+    }
+
+    /// Read one atomically published image tuple. Legacy refs use their proven
+    /// complete `RefRecord` plus compatibility sidecars.
+    pub fn image_ref_get(&self, name: &str) -> Result<Option<ImageRef>> {
+        store::image_ref::image_ref_get(&self.root, name)
+    }
+
+    /// Prepare optional OCI bodies in CAS, then publish their pointers and ref
+    /// record in one LOCIE1 envelope rename.
+    pub fn publish_image_ref(
+        &self,
+        rec: &RefRecord,
+        config: Option<&[u8]>,
+        manifest: Option<&ImageManifestRecord>,
+    ) -> Result<()> {
+        store::image_ref::publish_image_ref(&self.root, rec, config, manifest)
+    }
+
+    /// Publish already prepared OCI body pointers. Every supplied body must be
+    /// present in CAS before current ref replacement.
+    pub fn publish_prepared_image_ref(
+        &self,
+        rec: &RefRecord,
+        prepared: PreparedImageRef,
+    ) -> Result<()> {
+        store::image_ref::publish_prepared_image_ref(&self.root, rec, prepared)
     }
 
     // ── imgmeta ──────────────────────────────────────────────────────────────
