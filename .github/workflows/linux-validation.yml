@@ -948,16 +948,13 @@ jobs:
     # ADD (the path validated in #83) and the container joins the pod netns at
     # spawn. WP-#99: the container now runs the REAL image rootfs under the `ns`
     # engine (hydrated from the CAS, pivoted, joined into the pod netns) — proven by
-    # the real-container gate (PID 1 + alpine-release in its own root) and the
+    # a frozen, locally-built BusyBox rootfs (PID 1 + fixture marker in its own root) and the
     # cgroup.kill stop gate. Deliverable A (HARD GATE): crictl runp/create/start →
     # container RUNNING, real-container proof, cgroup.kill stop, clean teardown.
     # Deliverable B: a lightr cold-start datum (N iterations) + serve idle-RSS,
-    # REAL+measured on this runner, A/B'd against containerd's CRI plugin running
-    # the SAME alpine:latest rootfs via the SAME crictl/gRPC + SAME CNI on the
-    # SAME runner — now LIKE-FOR-LIKE (post-#99 both run the real rootfs; the
-    # crictl round-trip is common to both arms and cancels in the ratio). The
-    # containerd bring-up is SOFT/non-fatal (TODO if its CRI can't come up), but
-    # if it DOES come up the measurement runs and the A/B ratio is SIGNED.
+    # REAL+measured on this runner. This identity proof has no OCI registry,
+    # Docker, pull, or Alpine dependency: it snapshots a controlled rootfs into
+    # the server state before start.
     # Same manifest-path build as cri-serve-smoke.
     runs-on: ubuntu-latest
     steps:
@@ -966,8 +963,31 @@ jobs:
         run: rustup toolchain install 1.96.0 --profile minimal --no-self-update && rustup default 1.96.0
       - name: Build lightr-cri-serve (real backend + vendored shell)
         run: cargo build --release --locked --manifest-path crates/lightr-cri-serve/Cargo.toml -j2
-      - name: Build lightr (release) — for the pre-seed image fallback
+      - name: Build lightr (release) — snapshot controlled fixture into CRI state
         run: cargo build -p lightr-cli --release --locked -j2
+      - name: Install controlled-rootfs prerequisites
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y busybox-static uidmap
+          command -v busybox
+          test -x "$(command -v newuidmap)"
+          test -x "$(command -v newgidmap)"
+          sudo touch /etc/subuid /etc/subgid
+          sudo sh -c 'grep -q "^root:100000:65536$" /etc/subuid || echo "root:100000:65536" >> /etc/subuid'
+          sudo sh -c 'grep -q "^root:100000:65536$" /etc/subgid || echo "root:100000:65536" >> /etc/subgid'
+          for MAP in /etc/subuid /etc/subgid; do
+            awk -F: '$1 == "root" && $2 == 100000 && $3 == 65536 { found = 1 } END { exit !found }' "$MAP"
+          done
+          # Root's namespace maps container IDs 1..65536 to host 100000..165535.
+          # KPI3 requests 1001:1002, so both mapped host IDs must lie in that range.
+          for ID in 1001 1002; do
+            HOST_ID=$((100000 + ID))
+            [ "$HOST_ID" -ge 100000 ] && [ "$HOST_ID" -lt 165536 ] \
+              || { echo "uid/gid $ID maps outside root:100000:65536"; exit 1; }
+          done
+          test -u "$(command -v newuidmap)"
+          test -u "$(command -v newgidmap)"
       - name: Install crictl
         run: |
           set -euo pipefail
@@ -998,10 +1018,24 @@ jobs:
           SOCK=/tmp/lightr-kpi3.sock
           STATE=/tmp/lightr-kpi3-state
           SERVE="crates/lightr-cri-serve/target/release/lightr-cri-serve"
-          LIGHTR="$PWD/target/release/lightr"
-          LOGDIR=/tmp/kpi3-logs
-          sudo rm -rf "$STATE" "$LOGDIR" "$SOCK"
-          sudo mkdir -p "$LOGDIR" /run/netns
+           LIGHTR="$PWD/target/release/lightr"
+           LOGDIR=/tmp/kpi3-logs
+           FIXTURE_ROOT=/tmp/kpi3-id-rootfs
+           FIXTURE_IMAGE=kpi3-id-fixture
+           sudo rm -rf "$STATE" "$LOGDIR" "$SOCK"
+           sudo mkdir -p "$LOGDIR" /run/netns
+
+           # Build fixed rootfs from distro-pinned busybox-static, then snapshot it
+           # straight into this server's CAS. No OCI transport participates in this
+           # identity proof; marker is impossible to obtain from runner root.
+           sudo rm -rf "$FIXTURE_ROOT"
+           sudo install -d -m 0755 "$FIXTURE_ROOT/bin"
+           sudo install -m 0755 "$(command -v busybox)" "$FIXTURE_ROOT/bin/busybox"
+           sudo ln -s busybox "$FIXTURE_ROOT/bin/sh"
+           printf 'kpi3-controlled-rootfs-v1\n' | sudo tee "$FIXTURE_ROOT/kpi3-fixture-marker" >/dev/null
+           sudo -E env LIGHTR_HOME="$STATE" "$LIGHTR" snapshot --dir "$FIXTURE_ROOT" --name "$FIXTURE_IMAGE" >/tmp/fixture-seed.log 2>&1 \
+             || { echo "KPI3=FAIL (controlled rootfs snapshot failed)"; cat /tmp/fixture-seed.log; exit 1; }
+           echo "KPI3_FIXTURE=SEEDED ($FIXTURE_IMAGE from controlled busybox-static rootfs)"
 
           # crictl helper bound to the lightr serve socket (root: socket is root-owned).
           CR() { sudo crictl --runtime-endpoint "unix://$SOCK" --image-endpoint "unix://$SOCK" "$@"; }
@@ -1015,31 +1049,11 @@ jobs:
           CR version >/tmp/ver.txt 2>&1 || { echo "KPI3=FAIL (Version RPC failed)"; cat /tmp/ver.txt; sudo cat /tmp/serve.log; exit 1; }
           echo "=== serve answers crictl ==="; cat /tmp/ver.txt
 
-          # ── Step 2: make the alpine image available. PRIMARY = CRI pull path (crictl
-          # pull → LightrBackend.pull_image → lightr_oci::pull). FALLBACK = pre-seed
-          # the SAME state store via the `lightr` bin (LIGHTR_HOME=$STATE → $STATE/store).
-          # WP-#99: the container plane now HYDRATES this image's rootfs from the CAS and
-          # runs the command under the `ns` engine (real alpine root + pod netns), so the
-          # image content IS the container fs — the real-container gate below proves it.
-          # The store name MUST match `sanitize_ref("alpine:latest")` = "alpine-latest"
-          # so the hydrate lookup hits (the pre-seed name is set accordingly).
-          if CR pull alpine:latest >/tmp/pull.log 2>&1; then
-            echo "KPI3_IMAGE_PATH=crictl-pull"
-          else
-            echo "crictl pull failed — falling back to pre-seed:"; cat /tmp/pull.log
-            if sudo -E env LIGHTR_HOME="$STATE" "$LIGHTR" oci pull alpine:latest --name alpine-latest >/tmp/seed.log 2>&1; then
-              echo "KPI3_IMAGE_PATH=pre-seed"
-            else
-              echo "KPI3=FAIL (alpine image unavailable — the real-container gate needs the rootfs)"; cat /tmp/seed.log; sudo pkill -f lightr-cri-serve; exit 1
-            fi
-          fi
-          CR images 2>/dev/null || true
-
-          # ── Step 3: pod-sandbox + container config (crictl JSON). host_network
+           # ── Step 2: pod-sandbox + container config (crictl JSON). host_network
           # defaults to false → the backend creates+pins a netns and runs CNI ADD. The
           # container command (WP-#99) PROVES the real-container path: it prints its own
-          # PID (PID 1 ⇒ its own pid namespace), the alpine release file (only present in
-          # the ALPINE rootfs — NOT on the ubuntu runner), and `ls /` — all to its CRI
+           # PID (PID 1 ⇒ its own pid namespace), controlled-rootfs marker (not present
+           # on the Ubuntu runner), and pod netns inode — all to its CRI
           # log, then sleeps so it stays Running for the gate + a clean cgroup.kill stop.
           cat >/tmp/pod.json <<'JSON'
           {
@@ -1051,17 +1065,38 @@ jobs:
           cat >/tmp/ctr.json <<'JSON'
           {
             "metadata": { "name": "kpi3-ctr", "attempt": 1 },
-            "image": { "image": "alpine:latest" },
-            "command": ["/bin/sh", "-c", "echo PID=$$; echo ALPINE_RELEASE=$(cat /etc/alpine-release); echo ROOTLS=$(ls / | tr '\\n' ',' ); echo NETNS_INODE=$(stat -L -c %i /proc/self/ns/net); sleep 600"],
+             "image": { "image": "kpi3-id-fixture" },
+             "command": ["/bin/sh", "-c", "echo PID=$$; echo FIXTURE_MARKER=$(cat /kpi3-fixture-marker); echo NETNS_INODE=$(stat -L -c %i /proc/self/ns/net); id -u; id -g; sleep 600"],
             "log_path": "kpi3-ctr.log",
-            "linux": {}
+            "linux": { "security_context": { "run_as_user": { "value": 1001 }, "run_as_group": { "value": 1002 } } }
           }
           JSON
 
-          POD_ID=$(CR runp /tmp/pod.json 2>/tmp/runp.log)
-          if [ -z "$POD_ID" ]; then echo "KPI3=FAIL (runp returned no pod id)"; cat /tmp/runp.log; sudo cat /tmp/serve.log; sudo pkill -f lightr-cri-serve; exit 1; fi
-          echo "POD_ID=$POD_ID"
-          CTR_ID=$(CR create "$POD_ID" /tmp/ctr.json /tmp/pod.json 2>/tmp/create.log)
+           POD_ID=$(CR runp /tmp/pod.json 2>/tmp/runp.log)
+           if [ -z "$POD_ID" ]; then echo "KPI3=FAIL (runp returned no pod id)"; cat /tmp/runp.log; sudo cat /tmp/serve.log; sudo pkill -f lightr-cri-serve; exit 1; fi
+           echo "POD_ID=$POD_ID"
+          # CNI ADD must produce a pod IP recorded by this exact sandbox, then wire
+          # that IP, a non-loopback interface, and a default route in its exact pin.
+          PINNED_NETNS="/run/netns/lightr-${POD_ID:0:24}"
+          POD_STATUS=$(CR inspectp -o json "$POD_ID" 2>/tmp/inspectp.log)
+          POD_IP=$(printf '%s' "$POD_STATUS" | jq -r '.status.network.ip // .Status.Network.Ip // empty')
+          POD_ADDRS=$(sudo nsenter --net="$PINNED_NETNS" ip -o -4 addr show 2>/tmp/pod-addr.log)
+          POD_LINKS=$(sudo nsenter --net="$PINNED_NETNS" ip -o link show 2>/tmp/pod-link.log)
+          POD_ROUTE=$(sudo nsenter --net="$PINNED_NETNS" ip route show default 2>/tmp/pod-route.log)
+          POD_NONLO=$(printf '%s\n' "$POD_LINKS" | grep -E '^[0-9]+:' | grep -vE '^[0-9]+: lo:')
+          POD_IP_IFACE=$(printf '%s\n' "$POD_ADDRS" | grep -F -- "$POD_IP" | grep -vE '^[0-9]+: lo ')
+          CNI_FAIL=0
+          case "$POD_IP" in 10.88.*) ;; *) echo "CNI_FAIL: inspectp pod IP '$POD_IP' is outside 10.88.0.0/16"; CNI_FAIL=1 ;; esac
+          printf '%s\n' "$POD_ADDRS" | grep -F -- "$POD_IP" >/dev/null || { echo "CNI_FAIL: pod IP '$POD_IP' absent from $PINNED_NETNS"; CNI_FAIL=1; }
+          [ -n "$POD_IP_IFACE" ] || { echo "CNI_FAIL: pod IP '$POD_IP' is not on a non-loopback interface in $PINNED_NETNS"; CNI_FAIL=1; }
+          [ -n "$POD_NONLO" ] || { echo "CNI_FAIL: no non-loopback CNI interface in $PINNED_NETNS"; CNI_FAIL=1; }
+          printf '%s\n' "$POD_ROUTE" | grep -q '^default ' || { echo "CNI_FAIL: no default route in $PINNED_NETNS"; CNI_FAIL=1; }
+          if [ "$CNI_FAIL" != 0 ]; then
+            echo "KPI3_CNI=FAIL"; echo "=== inspectp ==="; echo "$POD_STATUS"; cat /tmp/pod-addr.log /tmp/pod-link.log /tmp/pod-route.log
+            CR rmp -f "$POD_ID" >/dev/null 2>&1; sudo pkill -f lightr-cri-serve; exit 1
+          fi
+          echo "KPI3_CNI=PASS (pod=$POD_ID ip=$POD_IP non-loopback interface + default route in pinned netns)"
+           CTR_ID=$(CR create "$POD_ID" /tmp/ctr.json /tmp/pod.json 2>/tmp/create.log)
           if [ -z "$CTR_ID" ]; then echo "KPI3=FAIL (create returned no container id)"; cat /tmp/create.log; sudo cat /tmp/serve.log; CR rmp -f "$POD_ID"; sudo pkill -f lightr-cri-serve; exit 1; fi
           echo "CTR_ID=$CTR_ID"
           CR start "$CTR_ID" >/tmp/start.log 2>&1
@@ -1074,7 +1109,7 @@ jobs:
           IMMEDIATE_STATE=$(CR inspect "$CTR_ID" 2>/dev/null | jq -r '.status.state' 2>/dev/null)
           echo "KPI3_IMMEDIATE_STATE=$IMMEDIATE_STATE (expected CONTAINER_RUNNING — #102 start is execv-aligned)"
 
-          # ── Step 4: GATE — the container MUST reach Running (poll up to ~30s). ──────
+           # ── Step 3: GATE — the container MUST reach Running (poll up to ~30s). ──────
           RUNNING=0
           for i in $(seq 1 30); do
             STATE_NOW=$(CR inspect "$CTR_ID" 2>/dev/null | jq -r '.status.state' 2>/dev/null)
@@ -1092,49 +1127,58 @@ jobs:
           fi
           echo "KPI3_LIFECYCLE=PASS (real container RUNNING through the composed CRI server: kubelet→gRPC→LightrBackend→ns-engine-in-pod-netns)"
 
-          # ── WP-#99 REAL-CONTAINER GATE: prove the container is the ALPINE rootfs
+           # ── REAL-CONTAINER IDENTITY GATE: prove controlled fixture rootfs
           # under ns isolation (NOT a host process). The container wrote its proof to
           # its CRI log; read it and assert. ───────────────────────────────────────────
           sleep 2  # let the stdout→tee→CRI-log flush settle (the echoes are the container's first act)
           CLOG="$LOGDIR/kpi3-ctr.log"
           echo "=== container CRI log ($CLOG) ==="; sudo cat "$CLOG" 2>/dev/null || echo "(no log)"
-          # The runner (ubuntu) must NOT have /etc/alpine-release — so its presence in
-          # the container log can ONLY come from the alpine rootfs the container pivoted.
-          if [ -f /etc/alpine-release ]; then
-            echo "KPI3_REAL=SKIP-UNEXPECTED (runner unexpectedly has /etc/alpine-release — proof would be ambiguous)"; HOST_HAS_ALPINE=1
-          else
-            HOST_HAS_ALPINE=0
-          fi
-          LOGTXT="$(sudo cat "$CLOG" 2>/dev/null)"
-          FAIL=0
-          echo "$LOGTXT" | grep -q "PID=1"            || { echo "REAL_FAIL: container is not PID 1 (no own pid namespace)"; FAIL=1; }
-          echo "$LOGTXT" | grep -qE "ALPINE_RELEASE=[0-9]" || { echo "REAL_FAIL: /etc/alpine-release absent ⇒ container root is NOT the alpine rootfs (host-process fallback?)"; FAIL=1; }
-          [ "$HOST_HAS_ALPINE" = 0 ] || { echo "REAL_FAIL: runner has /etc/alpine-release — cannot attribute the proof to the container root"; FAIL=1; }
+           # The runner must not own this marker. Its log presence therefore proves the
+           # snapshot materialized and pivot_root used the controlled fixture.
+           if [ -f /kpi3-fixture-marker ]; then
+             echo "KPI3_REAL=FAIL (runner unexpectedly has fixture marker — proof ambiguous)"; HOST_HAS_FIXTURE=1
+           else
+             HOST_HAS_FIXTURE=0
+           fi
+           LOGTXT="$(sudo cat "$CLOG" 2>/dev/null)"
+           FAIL=0
+           echo "$LOGTXT" | grep -q "PID=1"            || { echo "REAL_FAIL: container is not PID 1 (no own pid namespace)"; FAIL=1; }
+           echo "$LOGTXT" | grep -q "FIXTURE_MARKER=kpi3-controlled-rootfs-v1" || { echo "REAL_FAIL: fixture marker absent ⇒ container root is NOT the controlled rootfs"; FAIL=1; }
+           [ "$HOST_HAS_FIXTURE" = 0 ] || { echo "REAL_FAIL: runner has fixture marker — cannot attribute proof to container root"; FAIL=1; }
           # NETNS JOIN (strong) — ports the netns_lifecycle unit-test inode-equality
           # proof to a REAL hydrated container: the container's net-ns inode must equal
           # the pod's PINNED netns inode, proving the ns engine JOINED the pod netns
-          # (ExecSpec.join_netns) rather than creating a fresh/host one. One pod ⇒ one
-          # /run/netns/lightr-* pin (sandbox_net.rs NETNS_DIR).
+          # (ExecSpec.join_netns) rather than creating a fresh/host one. Resolve this
+          # pod's exact /run/netns/lightr-<pod-id-prefix> pin, never a wildcard peer.
           CTR_NETNS=$(echo "$LOGTXT" | grep -oE 'NETNS_INODE=[0-9]+' | head -1 | cut -d= -f2)
-          HOST_NETNS=$(stat -L -c %i /run/netns/lightr-* 2>/dev/null | head -1 | tr -d '[:space:]')
+          HOST_NETNS=$(stat -L -c %i "$PINNED_NETNS" 2>/dev/null | tr -d '[:space:]')
           if [ -n "$CTR_NETNS" ] && [ -n "$HOST_NETNS" ] && [ "$CTR_NETNS" = "$HOST_NETNS" ]; then
             echo "KPI3_NETNS_JOIN=PASS (container net-ns inode $CTR_NETNS == pod pinned netns $HOST_NETNS)"
           else
             echo "REAL_FAIL: container did NOT join the pod netns — container inode '$CTR_NETNS' != pod pinned netns '$HOST_NETNS'"; FAIL=1
           fi
           if [ "$FAIL" != 0 ]; then
-            echo "KPI3_REAL=FAIL (container is not the real alpine rootfs under ns isolation)"
+             echo "KPI3_REAL=FAIL (container is not controlled rootfs under ns isolation)"
             echo "=== inspect ==="; CR inspect "$CTR_ID" 2>&1 | head -60
             echo "=== serve.log ==="; sudo cat /tmp/serve.log
             CR stop "$CTR_ID" >/dev/null 2>&1; CR rmp -f "$POD_ID" >/dev/null 2>&1; sudo pkill -f lightr-cri-serve
             exit 1
           fi
-          echo "KPI3_REAL=PASS (container is PID 1 in its own netns/pidns, rooted at the ALPINE rootfs — real ns container, not a host process)"
+            echo "KPI3_REAL=PASS (container is PID 1 in its own netns/pidns, rooted at controlled fixture — real ns container, not a host process)"
+
+           # WP-#106: CRI RunAsUser/RunAsGroup must reach ExecSpec.user in the real
+           # ns container. Assert framed CRI log payloads exactly, not host output.
+           ID_LOGS=$(sudo awk '$2 == "stdout" && $3 == "F" && ($4 == "1001" || $4 == "1002") { print $4 }' "$CLOG")
+           if [ "$ID_LOGS" != "$(printf '1001\n1002')" ]; then
+             echo "KPI3_SECURITY_CONTEXT=FAIL (expected exact CRI log UID/GID 1001/1002, got: [$ID_LOGS])"
+             sudo cat /tmp/serve.log; CR stop "$CTR_ID" >/dev/null 2>&1; CR rmp -f "$POD_ID" >/dev/null 2>&1; sudo pkill -f lightr-cri-serve; exit 1
+           fi
+           echo "KPI3_SECURITY_CONTEXT=PASS (real ns CRI container logged uid=1001 gid=1002)"
 
           # ── WP-#100 EXEC GATE: `crictl exec` must ENTER the running ns container
           # (nsenter/setns model), NOT spawn a host process. `CR exec` is synchronous
           # ⇒ the backend's exec_sync path. We prove the exec ran INSIDE the container
-          # three independent ways: (1) it sees the ALPINE rootfs (the ubuntu runner
+           # three independent ways: (1) it sees controlled fixture rootfs (runner
           # has none — already established above, so unambiguous); (2) it has a SMALL
           # pid (in the container pid ns, not a host pid); (3) its mnt-ns inode equals
           # the container PID 1's mnt-ns inode (same mount namespace) — same
@@ -1153,13 +1197,13 @@ jobs:
           PID1_MNT=$(sudo stat -L -c %i "/proc/$PID1/ns/mnt")
           echo "container PID 1 host-pid=$PID1, mnt-ns inode=$PID1_MNT"
 
-          EXEC_OUT=$(CR exec "$CTR_ID" /bin/sh -c 'cat /etc/alpine-release; echo PID=$$; stat -L -c %i /proc/self/ns/mnt; stat -L -c %i /proc/self/ns/pid' 2>/tmp/exec.log)
+           EXEC_OUT=$(CR exec "$CTR_ID" /bin/sh -c 'cat /kpi3-fixture-marker; echo PID=$$; stat -L -c %i /proc/self/ns/mnt; stat -L -c %i /proc/self/ns/pid' 2>/tmp/exec.log)
           EXEC_RC=$?
           echo "=== crictl exec output (rc=$EXEC_RC) ==="; echo "$EXEC_OUT"; echo "=== exec stderr ==="; cat /tmp/exec.log
           EFAIL=0
           [ "$EXEC_RC" = 0 ] || { echo "EXEC_FAIL: crictl exec exit code $EXEC_RC != 0"; EFAIL=1; }
-          # (1) ALPINE rootfs: /etc/alpine-release is a dotted version (e.g. 3.21.3).
-          echo "$EXEC_OUT" | grep -qE '[0-9]+\.[0-9]+' || { echo "EXEC_FAIL: /etc/alpine-release not seen ⇒ exec is NOT in the container rootfs (host-process fallback?)"; EFAIL=1; }
+           # (1) Controlled fixture rootfs marker, unavailable on runner.
+           echo "$EXEC_OUT" | grep -q 'kpi3-controlled-rootfs-v1' || { echo "EXEC_FAIL: fixture marker not seen ⇒ exec is NOT in container rootfs (host-process fallback?)"; EFAIL=1; }
           # (2) container pid ns: $$ is a SMALL pid (substring grep, not ^-anchored sed).
           EXEC_PID=$(echo "$EXEC_OUT" | grep -oE 'PID=[0-9]+' | head -1 | cut -d= -f2)
           if [ -z "$EXEC_PID" ] || [ "$EXEC_PID" -ge 1000 ]; then
@@ -1176,7 +1220,7 @@ jobs:
             echo "=== serve.log ==="; sudo cat /tmp/serve.log
             CR stop "$CTR_ID" >/dev/null 2>&1; CR rmp -f "$POD_ID" >/dev/null 2>&1; sudo pkill -f lightr-cri-serve; exit 1
           fi
-          echo "KPI3_EXEC=PASS (crictl exec ENTERED the ns container: ALPINE rootfs visible, in-container pid=$EXEC_PID, mnt-ns inode $EXEC_MNT == PID1 mnt-ns $PID1_MNT)"
+          echo "KPI3_EXEC=PASS (crictl exec entered ns container: controlled fixture visible, in-container pid=$EXEC_PID, mnt-ns inode $EXEC_MNT == PID1 mnt-ns $PID1_MNT)"
 
           # ── WP-#103 EXEC-TTY GATE: `crictl exec -it` must open an INTERACTIVE,
           # pty-backed exec INSIDE the ns container — a real pty (job control / line
@@ -1189,8 +1233,8 @@ jobs:
           # propagates the child's exit code). We prove it FOUR ways: (1) `tty`
           # inside prints a /dev/pts/* path ⇒ a real pty was allocated for the
           # in-container exec; (2) `test -t 0` is true inside ⇒ fd 0 IS a tty; (3)
-          # /etc/alpine-release is visible ⇒ the ALPINE container rootfs (the ubuntu
-          # runner has none — already established); (4) exit 0. Substring grep
+           # fixture marker is visible ⇒ controlled container rootfs (runner has none
+           # — already established); (4) exit 0. Substring grep
           # parsing (the pty injects CRLFs). ──────────────────────────────────────────
           if ! command -v script >/dev/null 2>&1; then
             echo "KPI3_EXEC_TTY=FAIL (util-linux \`script\` absent — cannot drive a headless tty exec)"
@@ -1199,7 +1243,7 @@ jobs:
           # #105: also probe for the container's PRIVATE devpts — the in-container
           # exec should now see /dev/pts as a directory (the ns engine mounts a
           # `newinstance` devpts in setup_minimal_dev). HAS_DEVPTS proves the mount.
-          TTY_CMD="sudo crictl --runtime-endpoint unix://$SOCK --image-endpoint unix://$SOCK exec -it $CTR_ID /bin/sh -c 'tty; cat /etc/alpine-release; echo TTYPID=\$\$; test -t 0 && echo IS_TTY; test -d /dev/pts && echo HAS_DEVPTS'"
+           TTY_CMD="sudo crictl --runtime-endpoint unix://$SOCK --image-endpoint unix://$SOCK exec -it $CTR_ID /bin/sh -c 'tty; cat /kpi3-fixture-marker; echo TTYPID=\$\$; test -t 0 && echo IS_TTY; test -d /dev/pts && echo HAS_DEVPTS'"
           TTY_OUT=$(script -qec "$TTY_CMD" /dev/null 2>/tmp/exec-tty.log)
           TTY_RC=$?
           echo "=== crictl exec -it output (rc=$TTY_RC) ==="; echo "$TTY_OUT"; echo "=== exec-tty stderr ==="; cat /tmp/exec-tty.log
@@ -1214,8 +1258,8 @@ jobs:
           # NAME is not asserted. What #105 DOES guarantee is that /dev/pts EXISTS as a
           # mounted dir in the container — asserted below.
           echo "$TTY_OUT" | grep -q 'IS_TTY' || { echo "EXEC_TTY_FAIL: \`test -t 0\` false inside ⇒ stdin is not a tty (tty code path not taken)"; TFAIL=1; }
-          # (2) ALPINE container rootfs (dotted version), not the host.
-          echo "$TTY_OUT" | grep -qE '[0-9]+\.[0-9]+' || { echo "EXEC_TTY_FAIL: /etc/alpine-release not seen ⇒ tty exec is NOT in the container rootfs (host-process fallback?)"; TFAIL=1; }
+           # (2) Controlled fixture rootfs, not runner.
+           echo "$TTY_OUT" | grep -q 'kpi3-controlled-rootfs-v1' || { echo "EXEC_TTY_FAIL: fixture marker not seen ⇒ tty exec is NOT in container rootfs (host-process fallback?)"; TFAIL=1; }
           # (3) #105 DEVPTS gate: the container now has a private devpts mounted at
           # /dev/pts (setup_minimal_dev mounts a `newinstance` devpts). HARD-assert it
           # exists as a directory in the container (NOT that `tty` names the host pty's
@@ -1235,7 +1279,7 @@ jobs:
             echo "=== serve.log ==="; sudo cat /tmp/serve.log
             CR stop "$CTR_ID" >/dev/null 2>&1; CR rmp -f "$POD_ID" >/dev/null 2>&1; sudo pkill -f lightr-cri-serve; exit 1
           fi
-          echo "KPI3_EXEC_TTY=PASS (crictl exec -it opened a pty-backed interactive exec INSIDE the ns container: fd0 is a tty (isatty), ALPINE rootfs visible, exit 0)"
+           echo "KPI3_EXEC_TTY=PASS (crictl exec -it opened a pty-backed interactive exec inside ns container: fd0 is tty, controlled fixture visible, exit 0)"
 
           # ── WP-#99 STOP GATE: crictl stop must cgroup.kill the whole subtree. The
           # cgroup leaf is `lightr-cri-<CTR_ID>`; after stop its cgroup.procs must be
@@ -1270,7 +1314,7 @@ jobs:
           cat >/tmp/ctr-bad.json <<'JSON'
           {
             "metadata": { "name": "kpi3-badimg", "attempt": 1 },
-            "image": { "image": "alpine:latest" },
+             "image": { "image": "kpi3-id-fixture" },
             "command": ["/nonexistent-binary-xyz"],
             "log_path": "kpi3-badimg.log",
             "linux": {}
@@ -1302,10 +1346,37 @@ jobs:
             fi
             sleep 0.5
           done
-          echo "KPI3_NEG=PASS (non-existent binary: start FAILED rc=$BAD_START_RC and the container was NEVER CONTAINER_RUNNING — final state=$BAD_STATE)"
-          CR rm -f "$BAD_ID" >/dev/null 2>&1
+           echo "KPI3_NEG=PASS (non-existent binary: start FAILED rc=$BAD_START_RC and the container was NEVER CONTAINER_RUNNING — final state=$BAD_STATE)"
+           CR rm -f "$BAD_ID" >/dev/null 2>&1
 
-          # ── Deliverable B — lightr cold-start (REAL, reuses this serve). ───────────
+          # Missing fixture must fail closed: no OCI pull/fallback may replace the
+          # controlled snapshot contract, and a missing ref must never become Running.
+          cat >/tmp/ctr-missing-fixture.json <<'JSON'
+          {
+            "metadata": { "name": "kpi3-missing-fixture", "attempt": 1 },
+            "image": { "image": "kpi3-missing-fixture" },
+            "command": ["/bin/sh", "-c", "echo should-not-run"],
+            "log_path": "kpi3-missing-fixture.log",
+            "linux": {}
+          }
+          JSON
+          MISSING_ID=$(CR create "$POD_ID" /tmp/ctr-missing-fixture.json /tmp/pod.json 2>/tmp/missing-create.log)
+          if [ -z "$MISSING_ID" ]; then
+            echo "KPI3_FIXTURE_NEG=FAIL (missing-fixture create returned no id)"; cat /tmp/missing-create.log
+            sudo cat /tmp/serve.log; CR rmp -f "$POD_ID" >/dev/null 2>&1; sudo pkill -f lightr-cri-serve; exit 1
+          fi
+          CR start "$MISSING_ID" >/tmp/missing-start.log 2>&1
+          MISSING_START_RC=$?
+          MISSING_STATE=$(CR inspect "$MISSING_ID" 2>/dev/null | jq -r '.status.state' 2>/dev/null)
+          echo "missing fixture start rc=$MISSING_START_RC state=$MISSING_STATE"; cat /tmp/missing-start.log
+          if [ "$MISSING_START_RC" = 0 ] || [ "$MISSING_STATE" = "CONTAINER_RUNNING" ]; then
+            echo "KPI3_FIXTURE_NEG=FAIL (missing fixture started or became Running — OCI/fallback path leaked into controlled-rootfs contract)"
+            sudo cat /tmp/serve.log; CR rm -f "$MISSING_ID" >/dev/null 2>&1; CR rmp -f "$POD_ID" >/dev/null 2>&1; sudo pkill -f lightr-cri-serve; exit 1
+          fi
+          echo "KPI3_FIXTURE_NEG=PASS (missing controlled fixture failed closed: rc=$MISSING_START_RC state=$MISSING_STATE)"
+          CR rm -f "$MISSING_ID" >/dev/null 2>&1
+
+           # ── Deliverable B — lightr cold-start (REAL, reuses this serve). ───────────
           echo "=== B: lightr cold-start (create+start → Running), N iterations, same pod ==="
           N=5
           TIMES=""
@@ -1313,7 +1384,7 @@ jobs:
             cat >/tmp/ctr-b.json <<JSON
           {
             "metadata": { "name": "kpi3-bench", "attempt": $it },
-            "image": { "image": "alpine:latest" },
+             "image": { "image": "kpi3-id-fixture" },
             "command": ["/bin/sh", "-c", "sleep 600"],
             "log_path": "kpi3-bench-$it.log",
             "linux": {}

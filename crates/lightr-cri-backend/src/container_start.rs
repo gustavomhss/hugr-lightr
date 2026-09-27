@@ -90,6 +90,17 @@ impl LightrBackend {
         #[cfg(not(target_os = "linux"))]
         let ns_descriptor: Option<crate::ns_run::RunDescriptor> = None;
 
+        if ns_descriptor.is_none()
+            && rec.config.security.as_ref().is_some_and(|security| {
+                security.run_as_user.is_some() || security.run_as_group.is_some()
+            })
+        {
+            return Err(BackendError::FailedPrecondition(
+                "run_as_user/run_as_group require the Linux ns engine; native and vz paths are unsupported"
+                    .to_string(),
+            ));
+        }
+
         // WP-#102 (NS path only): create the exec-readiness pipe BEFORE building/
         // spawning `cmd`. The WRITE end (`wr`) travels — inherited (NOT O_CLOEXEC)
         // across the shim re-exec and threaded by the ns engine down to the

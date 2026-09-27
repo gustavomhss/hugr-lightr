@@ -96,6 +96,29 @@ fn malformed_v13_ingress_is_rejected_before_persistence() {
         .is_none());
 }
 
+#[test]
+fn identity_is_explicitly_unsupported_without_ns_engine() {
+    let b = LightrBackend::new(temp_home());
+    let mut sandbox_cfg = sb_cfg("host-pod");
+    sandbox_cfg.host_network = true;
+    let sandbox = b.run_sandbox(sandbox_cfg).unwrap();
+    let mut container = ct_cfg("ctr");
+    container.security = Some(SecurityContext {
+        apparmor: None,
+        seccomp: None,
+        capabilities: None,
+        run_as_user: Some(1001),
+        run_as_group: None,
+    });
+    let id = b.create_container(&sandbox, container).unwrap();
+    let err = b
+        .start_container(&id)
+        .expect_err("host path must reject identity");
+    assert!(err
+        .to_string()
+        .contains("native and vz paths are unsupported"));
+}
+
 // ── lifecycle: run → Ready → stop → NotReady → remove → gone ──────────────────
 
 #[test]

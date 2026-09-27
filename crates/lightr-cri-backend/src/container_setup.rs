@@ -119,6 +119,17 @@ impl LightrBackend {
                 .and_then(|security| security.seccomp.as_ref()),
         )?;
 
+        let user = map_identity(
+            rec.config
+                .security
+                .as_ref()
+                .and_then(|security| security.run_as_user),
+            rec.config
+                .security
+                .as_ref()
+                .and_then(|security| security.run_as_group),
+        )?;
+
         // WP-#107 (CRI GAP 1, "starting container with volume" + symlink-host-path):
         // map the CRI `ContainerConfig.mounts` to the descriptor. Resolve `host_path`
         // HOST-SIDE here (the symlink-host-path spec creates a symlink to the real
@@ -183,6 +194,7 @@ impl LightrBackend {
             // WP-#108: seccomp profile from the canonical security seam. The ns
             // engine compiles it before pivot and installs cBPF before execv.
             seccomp,
+            user,
             // WP-#107 (CRI GAP 1/2/3): the volume bind mounts (host-side realpath'd),
             // the synthesized /etc/resolv.conf, and the sandbox hostname. The ns engine
             // applies them in PID 1 (mounts + resolv.conf + hostname/UTS), fail-closed.
@@ -239,10 +251,33 @@ fn map_seccomp_profile(profile: Option<&crate::vocab::SecurityProfile>) -> Resul
     }
 }
 
+#[cfg(any(target_os = "linux", test))]
+fn map_identity(user: Option<u64>, group: Option<u64>) -> Result<Option<String>> {
+    let Some(user) = user else {
+        return Ok(None);
+    };
+    let user = u32::try_from(user).map_err(|_| {
+        BackendError::InvalidArgument("run_as_user exceeds u32::MAX for ns engine".to_string())
+    })?;
+    let group = group
+        .map(|group| {
+            u32::try_from(group).map_err(|_| {
+                BackendError::InvalidArgument(
+                    "run_as_group exceeds u32::MAX for ns engine".to_string(),
+                )
+            })
+        })
+        .transpose()?;
+    Ok(Some(match group {
+        Some(group) => format!("{user}:{group}"),
+        None => user.to_string(),
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::vocab::{ProfileType, SecurityProfile};
+    use crate::vocab::{ProfileType, SecurityContext, SecurityProfile};
 
     #[test]
     fn localhost_seccomp_profile_must_be_absolute_path() {
@@ -282,5 +317,32 @@ mod tests {
             .unwrap(),
             Some("default".to_string())
         );
+    }
+
+    #[test]
+    fn identity_maps_to_engine_user() {
+        assert_eq!(
+            map_identity(Some(1001), None).unwrap(),
+            Some("1001".to_string())
+        );
+        assert_eq!(
+            map_identity(Some(1001), Some(1002)).unwrap(),
+            Some("1001:1002".to_string())
+        );
+        assert_eq!(map_identity(None, None).unwrap(), None);
+    }
+
+    #[test]
+    fn persisted_identity_outside_u32_fails_ns_plan() {
+        let persisted: SecurityContext =
+            serde_json::from_str(&format!(r#"{{"run_as_user":{}}}"#, u64::from(u32::MAX) + 1))
+                .expect("pre-existing u64 identity parses");
+        let error = map_identity(persisted.run_as_user, persisted.run_as_group)
+            .expect_err("ns plan must reject a persisted uid outside u32");
+        assert!(error.to_string().contains("run_as_user exceeds u32::MAX"));
+
+        let error = map_identity(Some(1001), Some(u64::from(u32::MAX) + 1))
+            .expect_err("ns plan must reject a persisted gid outside u32");
+        assert!(error.to_string().contains("run_as_group exceeds u32::MAX"));
     }
 }

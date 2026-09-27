@@ -92,6 +92,10 @@ pub struct RunDescriptor {
     /// `#[serde(default)]` keeps old descriptors deserializing as `None`.
     #[serde(default)]
     pub seccomp: Option<String>,
+    /// Numeric `uid` or `uid:gid` derived from CRI `run_as_user` and
+    /// `run_as_group`. Becomes `ExecSpec.user`.
+    #[serde(default)]
+    pub user: Option<String>,
     /// WP-#107 (CRI GAP 1, "starting container with volume"): the CRI
     /// `ContainerConfig.mounts`, host-side already realpath'd in `build_ns_plan` (the
     /// symlink-host-path spec resolves `host_path` BEFORE it reaches here — a host
@@ -199,7 +203,7 @@ pub fn run_shim() -> ! {
         mounts: &[],
         env: &desc.env,
         workdir: None,
-        user: None,
+        user: desc.user.as_deref(),
         // WP-#107 (CRI GAP 3): the sandbox hostname — drives a UTS unshare +
         // sethostname + /etc/hostname in the ns engine. `None` ⇒ unchanged.
         hostname: desc.hostname.as_deref(),
