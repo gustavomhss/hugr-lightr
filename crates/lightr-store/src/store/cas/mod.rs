@@ -11,7 +11,7 @@ use std::ffi::CString;
 #[cfg(unix)]
 use std::fs::Permissions;
 use std::fs::{self, File, OpenOptions};
-use std::io::{Seek, SeekFrom, Write};
+use std::io::{Read, Seek, SeekFrom, Write};
 #[cfg(unix)]
 use std::os::fd::{AsRawFd, FromRawFd};
 #[cfg(unix)]
@@ -176,6 +176,70 @@ pub fn ingest_file(root: &Path, path: &Path, rung: CowRung) -> Result<Digest> {
     let _ = used_cow; // counted but not surfaced in API
 
     finish_ingest(&tmp, &dest, &shard, d)
+}
+
+/// Stream one expected object into CAS without retaining its contents in memory.
+/// Both digest and length are checked before the staged file becomes visible.
+pub fn ingest_reader(
+    root: &Path,
+    reader: &mut impl Read,
+    expected: Digest,
+    expected_length: u64,
+) -> Result<Digest> {
+    let _wg = write_guard(root)?;
+    let hex = expected.to_hex();
+    let (pre, _) = shard_parts(&hex);
+    let shard = root.join("objects").join(pre);
+    fs::create_dir_all(&shard)?;
+    let staging = OwnedTemp::new(&shard, &hex[..8])?;
+    let tmp = staging.payload();
+    let result = (|| {
+        let mut file = File::create(&tmp)?;
+        let (actual, length) = {
+            let mut tee = TeeReader {
+                reader,
+                writer: &mut file,
+            };
+            Digest::of_reader(&mut tee)?
+        };
+        file.sync_all()?;
+        drop(file);
+
+        if actual != expected {
+            return Err(LightrError::Integrity { expected, actual });
+        }
+        if length != expected_length {
+            return Err(LightrError::InvalidManifest(format!(
+                "stream length mismatch: expected {expected_length} got {length}"
+            )));
+        }
+
+        let dest = object_path(root, &expected);
+        if dest.exists() {
+            return Ok(expected);
+        }
+        fs::rename(&tmp, &dest)?;
+        fsync_dir(&shard)?;
+        set_mode(&dest, 0o444)?;
+        Ok(expected)
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&tmp);
+    }
+    result
+}
+
+struct TeeReader<'a, R, W> {
+    reader: &'a mut R,
+    writer: &'a mut W,
+}
+
+impl<R: Read, W: Write> Read for TeeReader<'_, R, W> {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        let count = self.reader.read(buffer)?;
+        self.writer.write_all(&buffer[..count])?;
+        Ok(count)
+    }
 }
 
 /// Validate the copied bytes, not just the earlier observation of the source.

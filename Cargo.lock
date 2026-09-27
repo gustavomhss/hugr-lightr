@@ -764,6 +764,7 @@ dependencies = [
  "lightr-core",
  "lightr-index",
  "lightr-store",
+ "rustix",
  "serde",
  "serde_json",
  "sha2",

@@ -5,6 +5,7 @@
 use lightr_core::{Digest, RefRecord, Result};
 use std::fs;
 use std::fs::File;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 pub mod store;
@@ -91,6 +92,17 @@ impl Store {
     /// Hash `path` and CoW-clone it into the store.  Idempotent.
     pub fn ingest_file(&self, path: &Path) -> Result<Digest> {
         store::cas::ingest_file(&self.root, path, self.rung)
+    }
+
+    /// Stream an object into CAS, verifying supplied digest and length before
+    /// publishing it under its content address.
+    pub fn ingest_reader(
+        &self,
+        reader: &mut impl Read,
+        expected: Digest,
+        expected_length: u64,
+    ) -> Result<Digest> {
+        store::cas::ingest_reader(&self.root, reader, expected, expected_length)
     }
 
     /// Read and verify `d`.  Missing → NotFound.  Hash mismatch → Integrity

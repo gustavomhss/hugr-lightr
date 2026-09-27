@@ -52,24 +52,22 @@ fn make_symlink_layer(target: &str, write_through_link: bool) -> Vec<u8> {
     tar.into_inner().unwrap().finish().unwrap()
 }
 
+#[cfg(unix)]
 #[test]
-fn test_symlink_target_traversal_rejects_import_without_ref() {
+fn test_absolute_and_parent_symlink_targets_are_opaque() {
     let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     for (suffix, target) in [("absolute", "/etc/passwd"), ("parent", "../escape")] {
         let tmp = TempDir::new().unwrap();
         let (_home, store) = tmp_store_and_home();
         let layout_dir = make_layout(tmp.path(), &[make_symlink_layer(target, false)]);
         let name = format!("symlink-{suffix}");
-        let result = import_layout(&layout_dir, &store, &name);
-
-        assert!(
-            matches!(&result, Err(LightrError::InvalidManifest(msg)) if msg.contains("unsafe layer symlink target")),
-            "{suffix} symlink target must reject import, got: {:?}",
-            result.as_ref().err()
-        );
-        assert!(
-            store.ref_get(&name).unwrap().is_none(),
-            "rejected symlink target must not publish ref"
+        import_layout(&layout_dir, &store, &name).unwrap();
+        let hydrate = tmp.path().join(format!("hydrate-{suffix}"));
+        fs::create_dir(&hydrate).unwrap();
+        lightr_index::hydrate(&hydrate, &store, &name).unwrap();
+        assert_eq!(
+            fs::read_link(hydrate.join("link")).unwrap(),
+            Path::new(target)
         );
     }
 }
@@ -79,11 +77,16 @@ fn test_write_through_symlink_component_rejects_import_without_ref() {
     let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     let tmp = TempDir::new().unwrap();
     let (_home, store) = tmp_store_and_home();
-    let layout_dir = make_layout(tmp.path(), &[make_symlink_layer("target", true)]);
+    let sentinel = tmp.path().join("outside-sentinel");
+    fs::write(&sentinel, b"outside remains").unwrap();
+    let layout_dir = make_layout(
+        tmp.path(),
+        &[make_symlink_layer(sentinel.to_str().unwrap(), true)],
+    );
     let result = import_layout(&layout_dir, &store, "symlink-component");
 
     assert!(
-        matches!(&result, Err(LightrError::InvalidManifest(msg)) if msg.contains("layer path traverses symlink")),
+        matches!(&result, Err(LightrError::InvalidManifest(_))),
         "write through symlink component must reject import, got: {:?}",
         result.as_ref().err()
     );
@@ -91,6 +94,7 @@ fn test_write_through_symlink_component_rejects_import_without_ref() {
         store.ref_get("symlink-component").unwrap().is_none(),
         "rejected symlink-component import must not publish ref"
     );
+    assert_eq!(fs::read(&sentinel).unwrap(), b"outside remains");
 }
 
 #[cfg(unix)]

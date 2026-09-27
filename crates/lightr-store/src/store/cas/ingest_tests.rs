@@ -105,3 +105,23 @@ fn copy_fallback_preserves_bytes_independently_of_source() {
 fn probed_copy_rung_preserves_bytes_independently_of_source() {
     assert_ingested_bytes_survive_source_change(None);
 }
+
+#[test]
+fn reader_ingest_rejects_digest_or_length_mismatch_without_object() {
+    let temp = TempDir::new().unwrap();
+    let store = Store::open(temp.path().join("store")).unwrap();
+    let expected = Digest::of_bytes(b"expected");
+
+    assert!(matches!(
+        store.ingest_reader(&mut b"actual".as_slice(), expected, 6),
+        Err(LightrError::Integrity { .. })
+    ));
+    assert!(!store.exists(&expected));
+
+    let bytes = b"expected";
+    assert!(matches!(
+        store.ingest_reader(&mut bytes.as_slice(), expected, 1),
+        Err(LightrError::InvalidManifest(_))
+    ));
+    assert!(!store.exists(&expected));
+}

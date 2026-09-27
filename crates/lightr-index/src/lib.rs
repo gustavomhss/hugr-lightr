@@ -9,7 +9,10 @@ pub use index::codec::Index;
 pub use index::gc::{gc, GcReport};
 pub use index::hydrate::{hydrate, hydrate_verified, HydrateReport};
 pub use index::scan::{scan, WalkReport};
-pub use index::snapshot::{snapshot, snapshot_with_publisher, SnapshotReport};
+pub use index::snapshot::{
+    prepare_snapshot_from_source, snapshot, snapshot_with_publisher, PendingSnapshot,
+    SnapshotReport, SnapshotSource,
+};
 pub use index::status::{status, StatusReport};
 pub use index::timeaxis::{bisect, diff_manifests, parse_lrr1, undo, undo_to, DiffReport};
 

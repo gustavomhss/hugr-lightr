@@ -18,6 +18,7 @@ lightr-index = { workspace = true }
 ureq = { workspace = true }
 flate2 = { workspace = true }
 tar = { workspace = true }
+rustix = { version = "1.1", features = ["fs", "std"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }

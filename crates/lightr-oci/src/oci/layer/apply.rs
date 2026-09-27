@@ -1,433 +1,182 @@
-//! Layer application state machine.
-//!
-//! # FIX 3 + 4: Intra-layer whiteout ordering
-//!
-//! OCI spec: whiteout entries in a layer refer to the *parent* layer's
-//! contents. Within a single layer we process ALL deletes (whiteouts) before
-//! any additions so that a file added AND whited out in the same layer ends up
-//! absent (OCI parent-ref semantics).
-//!
-//! Implementation: two-pass per layer.
-//!   Pass 1 (`collect_ops`) — parse tar into three buckets:
-//!     `dirs`      — directory entries (create first, before any writes)
-//!     `whiteouts` — (parent_in_temp, whiteout_name or None for opaque)
-//!     `pending`   — regular files, symlinks, hardlinks
-//!   Pass 2 (`apply_ops`) — apply dirs → whiteouts → regular/symlink → hardlinks.
-//!   FIX 5: hardlinks resolved after all regular files are written.
+//! Platform-neutral layer operations. Backends own confinement mechanics.
 
-use super::super::util::path_is_safe;
 use lightr_core::{LightrError, Result};
 use std::{
     collections::HashSet,
-    fs,
+    ffi::OsString,
     io::Read,
-    path::{Component, Path, PathBuf},
+    path::{Component, Path},
     time::Instant,
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Data types: shared between collect_ops and apply_ops
-// ─────────────────────────────────────────────────────────────────────────────
+pub(super) type LayerPath = Vec<OsString>;
 
-/// A pending whiteout delete collected during Pass 1.
-pub(super) struct WhiteoutOp {
-    pub(super) parent: PathBuf,
-    /// `Some(name)` ⇒ delete that name; `None` ⇒ opaque (clear all children).
-    pub(super) name: Option<String>,
-}
-
-/// A pending file or symlink write collected during Pass 1.
-pub(super) enum PendingEntry {
+pub(super) enum LayerOp {
+    Directory(LayerPath),
+    Whiteout {
+        parent: LayerPath,
+        name: Option<OsString>,
+    },
     Regular {
-        dest: PathBuf,
+        dest: LayerPath,
         data: Vec<u8>,
         mode: u32,
     },
     Symlink {
-        dest: PathBuf,
-        link_target: PathBuf,
+        dest: LayerPath,
+        target: OsString,
     },
-    /// A hardlink: `dest` should be a copy of `src` (both relative to tempdir
-    /// but `src` is the as-declared path from the tar header, still needs
-    /// resolving against tempdir).
     Hardlink {
-        dest: PathBuf,
-        /// The declared target path from the tar header (NOT yet joined with
-        /// tempdir; we resolve it after all regular files are written).
-        declared_target: PathBuf,
+        dest: LayerPath,
+        target: LayerPath,
     },
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Pass 1: parse tar → buckets
-// ─────────────────────────────────────────────────────────────────────────────
+/// Platform boundary. Implementations must never re-resolve an untrusted
+/// descendant by staging-root pathname after checking it.
+pub(super) trait LayerFs {
+    fn apply(&mut self, op: &LayerOp) -> Result<()>;
+}
 
-/// Parse an open tar `Archive` into operation buckets.
-///
-/// Samples `deadline` every 256 entries; returns
-/// `(dirs, whiteouts, pending, whited_out_paths)`.
-/// Increments shared `entry_count`.
-/// The four buckets produced by [`collect_ops`]: dirs to create, whiteouts to
-/// apply, pending file/symlink/hardlink entries, and the set of whited-out paths.
-type CollectedOps = (
-    Vec<PathBuf>,
-    Vec<WhiteoutOp>,
-    Vec<PendingEntry>,
-    HashSet<PathBuf>,
-);
+fn layer_path(path: &Path) -> Result<LayerPath> {
+    let components: LayerPath = path
+        .components()
+        .filter_map(|component| match component {
+            Component::CurDir => None,
+            Component::Normal(name) => Some(Ok(name.to_os_string())),
+            _ => Some(Err(LightrError::InvalidManifest(format!(
+                "unsafe layer path: {}",
+                path.display()
+            )))),
+        })
+        .collect::<Result<_>>()?;
+    if components.is_empty() {
+        return Err(LightrError::InvalidManifest("empty layer path".into()));
+    }
+    Ok(components)
+}
 
 pub(super) fn collect_ops<R: Read>(
     archive: &mut tar::Archive<R>,
-    tempdir: &Path,
     deadline: Instant,
     entry_count: &mut u64,
     timeout_secs: u64,
-) -> Result<CollectedOps> {
-    let mut dirs: Vec<PathBuf> = Vec::new();
-    let mut whiteouts: Vec<WhiteoutOp> = Vec::new();
-    let mut pending: Vec<PendingEntry> = Vec::new();
-    // whited_out_paths: absolute paths (within tempdir) that must be absent
-    // after this layer — even if the same layer also adds them (whiteout wins).
-    let mut whited_out_paths: HashSet<PathBuf> = HashSet::new();
-
+) -> Result<(Vec<LayerOp>, HashSet<LayerPath>)> {
+    let mut ops = Vec::new();
+    let mut whited_out = HashSet::new();
     for entry_result in archive.entries().map_err(LightrError::Io)? {
-        // Deadline check: sample every 256 entries to keep hot-path
-        // overhead ~zero.  Fail closed with InvalidManifest on exceed.
         *entry_count += 1;
         if *entry_count & 0xFF == 0 && Instant::now() >= deadline {
             return Err(LightrError::InvalidManifest(format!(
-                "layer extraction timed out after {} s (LIGHTR_LAYER_TIMEOUT_SECS)",
-                timeout_secs
+                "layer extraction timed out after {timeout_secs} s (LIGHTR_LAYER_TIMEOUT_SECS)"
             )));
         }
-
         let mut entry = entry_result.map_err(LightrError::Io)?;
-        let entry_path = entry.path().map_err(LightrError::Io)?.into_owned();
-
-        // Archive traversal invalidates whole import; never publish a partial tree.
-        if !path_is_safe(&entry_path) {
-            return Err(LightrError::InvalidManifest(format!(
-                "unsafe layer path: {}",
-                entry_path.display()
-            )));
-        }
-
-        // Strip a leading `.` component (common in OCI layers)
-        let rel: PathBuf = entry_path
-            .components()
-            .skip_while(|c| matches!(c, Component::CurDir))
-            .collect();
-
-        if rel.as_os_str().is_empty() {
+        let path = layer_path(&entry.path().map_err(LightrError::Io)?)?;
+        let name = path.last().expect("non-empty checked path").clone();
+        let parent = path[..path.len() - 1].to_vec();
+        let is_whiteout = name
+            .to_string_lossy()
+            .strip_prefix(".wh.")
+            .map(OsString::from);
+        if let Some(name) = is_whiteout {
+            let opaque = name == ".wh..opq";
+            if !opaque {
+                let mut target = parent.clone();
+                target.push(name.clone());
+                whited_out.insert(target);
+            }
+            ops.push(LayerOp::Whiteout {
+                parent,
+                name: (!opaque).then_some(name),
+            });
             continue;
         }
-
-        let file_name = rel
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_default();
-
-        let parent_in_temp = if let Some(p) = rel.parent() {
-            tempdir.join(p)
-        } else {
-            tempdir.to_path_buf()
-        };
-
         use tar::EntryType;
         match entry.header().entry_type() {
-            EntryType::Directory => {
-                // OCI whiteout files are sometimes emitted as Directory-type entries
-                // (e.g. by the `make_layer` fixture and some OCI producers). We must
-                // check for whiteout names BEFORE treating the entry as a directory.
-                // FIX 4 (opaque whiteout via dir entry)
-                if file_name == ".wh..wh..opq" {
-                    whiteouts.push(WhiteoutOp {
-                        parent: parent_in_temp,
-                        name: None, // opaque
-                    });
-                    continue;
-                }
-                // FIX 3 (whiteout via dir entry)
-                if let Some(whiteout_name) = file_name.strip_prefix(".wh.") {
-                    whited_out_paths.insert(parent_in_temp.join(whiteout_name));
-                    whiteouts.push(WhiteoutOp {
-                        parent: parent_in_temp,
-                        name: Some(whiteout_name.to_string()),
-                    });
-                    continue;
-                }
-                dirs.push(tempdir.join(&rel));
-            }
+            EntryType::Directory => ops.push(LayerOp::Directory(path)),
             EntryType::Regular | EntryType::Continuous => {
-                // FIX 4 (opaque whiteout): `.wh..wh..opq` → clear the dir
-                if file_name == ".wh..wh..opq" {
-                    whiteouts.push(WhiteoutOp {
-                        parent: parent_in_temp,
-                        name: None, // opaque
-                    });
-                    continue;
-                }
-                // FIX 3 (regular whiteout): `.wh.<name>` → delete <name>
-                if let Some(whiteout_name) = file_name.strip_prefix(".wh.") {
-                    // Track this as a path that must be absent after this layer
-                    // (even if the layer also adds this exact path — whiteout wins).
-                    whited_out_paths.insert(parent_in_temp.join(whiteout_name));
-                    whiteouts.push(WhiteoutOp {
-                        parent: parent_in_temp,
-                        name: Some(whiteout_name.to_string()),
-                    });
-                    continue;
-                }
-                // Regular file: collect content
-                let dest = tempdir.join(&rel);
                 let mode = entry.header().mode().map_err(LightrError::Io)?;
                 let mut data = Vec::new();
                 entry.read_to_end(&mut data).map_err(LightrError::Io)?;
-                pending.push(PendingEntry::Regular { dest, data, mode });
+                ops.push(LayerOp::Regular {
+                    dest: path,
+                    data,
+                    mode,
+                });
             }
             EntryType::Symlink => {
-                let dest = tempdir.join(&rel);
-                let link_target = entry
+                // OCI permits absolute and dangling link text. It is data, not a host path.
+                let target = entry
                     .header()
                     .link_name()
                     .map_err(LightrError::Io)?
-                    .map(|p| p.into_owned())
-                    .unwrap_or_else(|| PathBuf::from(""));
-                if !path_is_safe(&link_target) {
-                    return Err(LightrError::InvalidManifest(format!(
-                        "unsafe layer symlink target: {}",
-                        link_target.display()
-                    )));
-                }
-                pending.push(PendingEntry::Symlink { dest, link_target });
+                    .map(|p| p.into_owned().into_os_string())
+                    .unwrap_or_default();
+                ops.push(LayerOp::Symlink { dest: path, target });
             }
             EntryType::Link => {
-                // FIX 5: Hardlink — collect for second pass; missing target ⇒ error.
-                let dest = tempdir.join(&rel);
-                let link_target = entry
+                let target = entry
                     .header()
                     .link_name()
                     .map_err(LightrError::Io)?
                     .map(|p| p.into_owned())
-                    .unwrap_or_else(|| PathBuf::from(""));
-                // Strip leading ./ from the declared target
-                let clean_target: PathBuf = link_target
-                    .components()
-                    .skip_while(|c| matches!(c, Component::CurDir))
-                    .collect();
-                pending.push(PendingEntry::Hardlink {
-                    dest,
-                    declared_target: clean_target,
+                    .ok_or_else(|| {
+                        LightrError::InvalidManifest("hardlink target missing".into())
+                    })?;
+                ops.push(LayerOp::Hardlink {
+                    dest: path,
+                    target: layer_path(&target)?,
                 });
             }
             _ => {
-                // Other entry types (char/block devices, fifos) — skip
+                return Err(LightrError::Unsupported(format!(
+                    "unsupported OCI layer entry type: {:?}",
+                    entry.header().entry_type()
+                )))
             }
         }
     }
-
-    Ok((dirs, whiteouts, pending, whited_out_paths))
+    Ok((ops, whited_out))
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Pass 2: apply dirs → whiteouts → files/symlinks → hardlinks
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Apply the collected operation buckets to `tempdir`.
-///
-/// Order: dirs → whiteouts (FIX 3 + 4) → regular files / symlinks →
-/// hardlinks (FIX 5).
 pub(super) fn apply_ops(
-    tempdir: &Path,
-    dirs: &[PathBuf],
-    whiteouts: &[WhiteoutOp],
-    pending: &[PendingEntry],
-    whited_out_paths: &HashSet<PathBuf>,
+    fs: &mut dyn LayerFs,
+    ops: &[LayerOp],
+    whited_out: &HashSet<LayerPath>,
 ) -> Result<()> {
-    // ── Apply directories first ───────────────────────────────────────────
-    for dir_path in dirs {
-        reject_symlink_components(tempdir, dir_path)?;
-        fs::create_dir_all(dir_path).map_err(LightrError::Io)?;
+    for op in ops.iter().filter(|op| matches!(op, LayerOp::Directory(_))) {
+        fs.apply(op)?;
     }
-
-    // ── Apply whiteouts (ALL before additions — FIX 3 + 4) ───────────────
-    for wo in whiteouts {
-        match &wo.name {
-            // Regular whiteout: `.wh.<name>` — remove `<name>`
-            Some(name) => {
-                reject_symlink_components(tempdir, &wo.parent)?;
-                let target = wo.parent.join(name);
-                if target.is_dir() {
-                    let _ = fs::remove_dir_all(&target);
-                } else {
-                    let _ = fs::remove_file(&target);
-                }
-            }
-            // Opaque whiteout: clear the dir's existing contents (keep dir).
-            // FIX 4: create the dir if it is absent, THEN clear it.
-            None => {
-                reject_symlink_components(tempdir, &wo.parent)?;
-                fs::create_dir_all(&wo.parent).map_err(LightrError::Io)?;
-                for child in fs::read_dir(&wo.parent).map_err(LightrError::Io)?.flatten() {
-                    let cp = child.path();
-                    if cp.is_dir() {
-                        let _ = fs::remove_dir_all(&cp);
-                    } else {
-                        let _ = fs::remove_file(&cp);
-                    }
-                }
-            }
+    for op in ops
+        .iter()
+        .filter(|op| matches!(op, LayerOp::Whiteout { .. }))
+    {
+        fs.apply(op)?;
+    }
+    for op in ops
+        .iter()
+        .filter(|op| matches!(op, LayerOp::Regular { .. } | LayerOp::Symlink { .. }))
+    {
+        let dest = match op {
+            LayerOp::Regular { dest, .. } | LayerOp::Symlink { dest, .. } => dest,
+            _ => unreachable!(),
+        };
+        if !whited_out.contains(dest) {
+            fs.apply(op)?;
         }
     }
-
-    // ── Apply regular files and symlinks ──────────────────────────────────
-    // Skip any file whose absolute dest path is in whited_out_paths (FIX 3:
-    // whiteout wins even for same-layer adds). Also skip files inside opaque-
-    // whiteout dirs that were not added by this layer (already cleared above).
-    //
-    // Hardlinks are deferred until after regular files are written so that
-    // a hardlink target that appears earlier in the layer has been written.
-    for pe in pending {
-        match pe {
-            PendingEntry::Regular { dest, data, mode } => {
-                // Whiteout wins: skip if this path was whited out in this layer.
-                if whited_out_paths.contains(dest.as_path()) {
-                    continue;
-                }
-                if let Some(p) = dest.parent() {
-                    reject_symlink_components(tempdir, p)?;
-                    fs::create_dir_all(p).map_err(LightrError::Io)?;
-                }
-                remove_symlink(dest)?;
-                fs::write(dest, data).map_err(LightrError::Io)?;
-                #[cfg(unix)]
-                {
-                    use std::os::unix::fs::PermissionsExt;
-                    fs::set_permissions(dest, fs::Permissions::from_mode(*mode))
-                        .map_err(LightrError::Io)?;
-                }
-                #[cfg(windows)]
-                {
-                    // WIN-PATH: Windows has no POSIX mode bits; honour read-only (bit 0o200 = owner write).
-                    // All other permission semantics are skipped on Windows.
-                    let readonly = (*mode & 0o200) == 0;
-                    if readonly {
-                        let mut perms = fs::metadata(dest).map_err(LightrError::Io)?.permissions();
-                        perms.set_readonly(true);
-                        let _ = fs::set_permissions(dest, perms);
-                    }
-                }
-            }
-            PendingEntry::Symlink { dest, link_target } => {
-                if whited_out_paths.contains(dest.as_path()) {
-                    continue;
-                }
-                if let Some(p) = dest.parent() {
-                    reject_symlink_components(tempdir, p)?;
-                    fs::create_dir_all(p).map_err(LightrError::Io)?;
-                }
-                let _ = fs::remove_file(dest);
-                #[cfg(unix)]
-                std::os::unix::fs::symlink(link_target, dest).map_err(LightrError::Io)?;
-                #[cfg(windows)]
-                {
-                    // WIN-PATH: symlink creation requires Developer Mode or admin on Windows.
-                    // Fall back to copying the target if symlink creation fails so import never hard-fails.
-                    use std::os::windows::fs::symlink_file;
-                    if symlink_file(link_target, dest).is_err() {
-                        // Symlink creation failed (no Dev Mode / not admin) — copy the target instead.
-                        // The target may itself be relative; resolve it against dest's parent.
-                        let resolved_target = if link_target.is_absolute() {
-                            link_target.to_path_buf()
-                        } else {
-                            dest.parent()
-                                .unwrap_or_else(|| std::path::Path::new("."))
-                                .join(link_target)
-                        };
-                        if resolved_target.exists() {
-                            fs::copy(&resolved_target, dest).map_err(LightrError::Io)?;
-                        }
-                        // If target does not exist either (broken symlink in the layer), skip — no error.
-                    }
-                }
-            }
-            PendingEntry::Hardlink { .. } => {} // handled below
-        }
-    }
-
-    // ── Resolve hardlinks (FIX 5) ─────────────────────────────────────────
-    // All regular files in this layer are now written. Attempt to resolve
-    // each hardlink; if the target is still missing ⇒ error (fail-closed).
-    for pe in pending {
-        if let PendingEntry::Hardlink {
-            dest,
-            declared_target,
-        } = pe
-        {
-            // Whiteout also covers hardlink destinations.
-            if whited_out_paths.contains(dest.as_path()) {
-                continue;
-            }
-            let src = tempdir.join(declared_target);
-            reject_symlink_components(tempdir, &src)?;
-            if !src.exists() {
-                return Err(LightrError::InvalidManifest(format!(
-                    "hardlink target not found: {}",
-                    declared_target.display()
-                )));
-            }
-            if let Some(p) = dest.parent() {
-                reject_symlink_components(tempdir, p)?;
-                fs::create_dir_all(p).map_err(LightrError::Io)?;
-            }
-            remove_symlink(dest)?;
-            fs::copy(&src, dest).map_err(LightrError::Io)?;
-        }
-    }
-
-    Ok(())
-}
-
-/// Reject a write path with an existing symlink in any component under `tempdir`.
-fn reject_symlink_components(tempdir: &Path, path: &Path) -> Result<()> {
-    let relative = path.strip_prefix(tempdir).map_err(|_| {
-        LightrError::InvalidManifest(format!("layer path outside tempdir: {}", path.display()))
-    })?;
-    let mut current = tempdir.to_path_buf();
-    for component in relative.components() {
-        match component {
-            Component::Normal(part) => current.push(part),
-            Component::CurDir => continue,
-            _ => {
-                return Err(LightrError::InvalidManifest(format!(
-                    "unsafe layer path: {}",
-                    path.display()
-                )));
-            }
-        }
-        match fs::symlink_metadata(&current) {
-            Ok(metadata) if metadata.file_type().is_symlink() => {
-                return Err(LightrError::InvalidManifest(format!(
-                    "layer path traverses symlink: {}",
-                    current.display()
-                )));
-            }
-            Ok(_) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-            Err(error) => return Err(LightrError::Io(error)),
+    for op in ops
+        .iter()
+        .filter(|op| matches!(op, LayerOp::Hardlink { .. }))
+    {
+        let dest = match op {
+            LayerOp::Hardlink { dest, .. } => dest,
+            _ => unreachable!(),
+        };
+        if !whited_out.contains(dest) {
+            fs.apply(op)?;
         }
     }
     Ok(())
-}
-
-/// Replace a leaf symlink rather than following it during a file write.
-fn remove_symlink(path: &Path) -> Result<()> {
-    match fs::symlink_metadata(path) {
-        Ok(metadata) if metadata.file_type().is_symlink() => {
-            fs::remove_file(path).map_err(LightrError::Io)
-        }
-        Ok(_) => Ok(()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(LightrError::Io(error)),
-    }
 }

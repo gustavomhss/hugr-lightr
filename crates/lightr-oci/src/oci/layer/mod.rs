@@ -1,7 +1,11 @@
 //! Layer blob representation and apply_layers core.
 
+#[cfg_attr(not(unix), allow(dead_code))]
 mod apply;
+#[cfg(unix)]
+mod unix;
 
+#[cfg(unix)]
 use apply::{apply_ops, collect_ops};
 use flate2::read::GzDecoder;
 use lightr_core::{LightrError, Result};
@@ -9,13 +13,14 @@ use lightr_store::Store;
 use std::{
     fs,
     io::{self, BufReader, Read},
-    path::{Path, PathBuf},
+    path::PathBuf,
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Layer blob: in-memory bytes or a temp file path (for pull)
 // ─────────────────────────────────────────────────────────────────────────────
 
+#[cfg_attr(not(unix), allow(dead_code))]
 pub(super) enum LayerBlob {
     /// The layer data lives at this path (owned by the caller's TempDirGuard).
     File(PathBuf),
@@ -23,6 +28,7 @@ pub(super) enum LayerBlob {
     Bytes(Vec<u8>),
 }
 
+#[cfg_attr(not(unix), allow(dead_code))]
 impl LayerBlob {
     /// Open a streaming `Read` over the layer, auto-detecting gzip by magic bytes.
     ///
@@ -77,6 +83,7 @@ impl LayerBlob {
 ///
 /// Default: 600 s.  Override via `LIGHTR_LAYER_TIMEOUT_SECS` (any non-integer
 /// or value ≤ 0 silently falls back to the default).
+#[cfg_attr(not(unix), allow(dead_code))]
 pub(super) fn layer_timeout_secs() -> u64 {
     const DEFAULT_TIMEOUT_SECS: u64 = 600;
     std::env::var("LIGHTR_LAYER_TIMEOUT_SECS")
@@ -109,7 +116,9 @@ pub(super) fn layer_timeout_secs() -> u64 {
 ///   Between passes — apply directory creates + all whiteouts.
 ///   Pass 2 (`apply_ops`) — write regular files and symlinks.
 ///   After pass 2 — resolve hardlinks (FIX 5).
-pub(super) fn apply_layers(tempdir: &Path, blobs: &[LayerBlob]) -> Result<()> {
+#[cfg(unix)]
+pub(super) fn apply_layers(blobs: &[LayerBlob]) -> Result<LayerStage> {
+    let mut fs = unix::UnixLayerFs::new()?;
     let timeout = layer_timeout_secs();
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout);
     let mut entry_count: u64 = 0;
@@ -135,42 +144,65 @@ pub(super) fn apply_layers(tempdir: &Path, blobs: &[LayerBlob]) -> Result<()> {
         // FIX 3: all whiteout operations execute before any file writes.
         // FIX 4: opaque whiteout clears the dir in the accumulated tree and
         //        creates it if absent.
-        let (dirs, whiteouts, pending, whited_out_paths) =
-            collect_ops(&mut archive, tempdir, deadline, &mut entry_count, timeout)?;
+        let (ops, whited_out_paths) =
+            collect_ops(&mut archive, deadline, &mut entry_count, timeout)?;
 
         // ── Pass 2: apply dirs → whiteouts → files → hardlinks ───────────────
-        apply_ops(tempdir, &dirs, &whiteouts, &pending, &whited_out_paths)?;
+        apply_ops(&mut fs, &ops, &whited_out_paths)?;
     }
 
-    Ok(())
+    Ok(LayerStage(fs))
+}
+
+#[cfg(unix)]
+pub(super) struct LayerStage(unix::UnixLayerFs);
+#[cfg(unix)]
+impl LayerStage {
+    fn snapshot_source(&self) -> Result<(unix::UnixSnapshotSource, lightr_core::Manifest)> {
+        self.0.snapshot_source()
+    }
+
+    fn cleanup(&mut self) -> Result<()> {
+        self.0.cleanup()
+    }
+}
+
+#[cfg(not(unix))]
+#[allow(dead_code)]
+pub(super) struct LayerStage;
+#[cfg(not(unix))]
+#[allow(dead_code)]
+impl LayerStage {
+    fn path(&self) -> &std::path::Path {
+        unreachable!("unsupported OCI layer apply cannot create a stage")
+    }
+}
+#[cfg(not(unix))]
+#[allow(dead_code)]
+pub(super) fn apply_layers(_blobs: &[LayerBlob]) -> Result<LayerStage> {
+    Err(LightrError::Unsupported(
+        "OCI layer apply has no qualified named-handle backend on this platform".into(),
+    ))
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // apply_and_snapshot — create a fresh tempdir, apply blobs, snapshot
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Create a fresh tempdir, apply the blobs, snapshot, return report.
-#[cfg(test)]
+/// Create private descriptor-anchored staging, apply blobs, snapshot, return report.
+#[cfg(unix)]
+#[cfg_attr(not(test), allow(dead_code))]
 pub(super) fn apply_and_snapshot(
     blobs: Vec<LayerBlob>,
     layer_count: u64,
     store: &Store,
     name: &str,
 ) -> Result<super::model::ImportReport> {
-    use super::util::TempDirGuard;
-
-    let pid = std::process::id();
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.subsec_nanos())
-        .unwrap_or(0);
-    let tempdir = std::env::temp_dir().join(format!("lightr-oci-{pid}-{nanos}"));
-    fs::create_dir_all(&tempdir).map_err(LightrError::Io)?;
-    let _guard = TempDirGuard(tempdir.clone());
-
-    apply_layers(&tempdir, &blobs)?;
-
-    let report = lightr_index::snapshot(&tempdir, store, name)?;
+    let mut stage = apply_layers(&blobs)?;
+    let (source, manifest) = stage.snapshot_source()?;
+    let pending = lightr_index::prepare_snapshot_from_source(&source, store, name, manifest)?;
+    stage.cleanup()?;
+    let report = pending.commit()?;
 
     Ok(super::model::ImportReport {
         name: name.to_string(),
@@ -180,8 +212,22 @@ pub(super) fn apply_and_snapshot(
     })
 }
 
+#[cfg(not(unix))]
+#[allow(dead_code)]
+pub(super) fn apply_and_snapshot(
+    _blobs: Vec<LayerBlob>,
+    _layer_count: u64,
+    _store: &Store,
+    _name: &str,
+) -> Result<super::model::ImportReport> {
+    Err(LightrError::Unsupported(
+        "OCI layer apply has no qualified named-handle backend on this platform".into(),
+    ))
+}
+
 /// OCI import publishes captured config, manifest record, and snapshot ref as
 /// one Store envelope after every body and tree object is ready.
+#[cfg(unix)]
 pub(super) fn apply_and_publish_image(
     blobs: Vec<LayerBlob>,
     layer_count: u64,
@@ -190,25 +236,30 @@ pub(super) fn apply_and_publish_image(
     config: &[u8],
     image_manifest: &lightr_store::ImageManifestRecord,
 ) -> Result<super::model::ImportReport> {
-    use super::util::TempDirGuard;
-
-    let pid = std::process::id();
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.subsec_nanos())
-        .unwrap_or(0);
-    let tempdir = std::env::temp_dir().join(format!("lightr-oci-{pid}-{nanos}"));
-    fs::create_dir_all(&tempdir).map_err(LightrError::Io)?;
-    let _guard = TempDirGuard(tempdir.clone());
-
-    apply_layers(&tempdir, &blobs)?;
-    let report = lightr_index::snapshot_with_publisher(&tempdir, store, name, |rec| {
-        store.publish_image_ref(rec, Some(config), Some(image_manifest))
-    })?;
+    let mut stage = apply_layers(&blobs)?;
+    let (source, manifest) = stage.snapshot_source()?;
+    let pending = lightr_index::prepare_snapshot_from_source(&source, store, name, manifest)?;
+    stage.cleanup()?;
+    let report = pending
+        .commit_with(|rec| store.publish_image_ref(rec, Some(config), Some(image_manifest)))?;
     Ok(super::model::ImportReport {
         name: name.to_string(),
         root: report.root,
         layers: layer_count,
         files: report.files,
     })
+}
+
+#[cfg(not(unix))]
+pub(super) fn apply_and_publish_image(
+    _blobs: Vec<LayerBlob>,
+    _layer_count: u64,
+    _store: &Store,
+    _name: &str,
+    _config: &[u8],
+    _image_manifest: &lightr_store::ImageManifestRecord,
+) -> Result<super::model::ImportReport> {
+    Err(LightrError::Unsupported(
+        "OCI layer apply has no qualified named-handle backend on this platform".into(),
+    ))
 }
