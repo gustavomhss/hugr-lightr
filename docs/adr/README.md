@@ -26,5 +26,5 @@ the batch acceptance of 0001/0002/0004/0006/0007 were Accepted under the
 | [0016](0016-deep-memo.md) | Deep-memo (FS view as tracer) | Accepted (ratified 2026-07-02) |
 | [0017](0017-cross-platform.md) | One product, every desktop: cross-platform engines + portability seams | Accepted (owner mandate 2026-06-12); ADR-0021 supersedes its OCI-import symlink copy fallback only |
 | [0020](0020-snapshot-integrity-activation.md) | Snapshot integrity: bounded metadata and coordinated activation | Accepted design (2026-09-17, delegated coordinator review); runtime/activation gates remain |
-| [0021](0021-oci-layer-confinement.md) | OCI layer confinement and typed-link preservation | Accepted (owner decision 2026-09-27); Windows runtime qualification mandatory |
+| [0021](0021-oci-layer-confinement.md) | OCI layer confinement and typed-link preservation | Accepted (owner Unix-first decision [2026-09-27](https://github.com/gmhelmold/hugr-lightr/issues/242#issuecomment-5854246940)); macOS/Linux target release scope pending #242 evidence, Windows `Unsupported` enforcement pending separate PR |
 | [0022](0022-atomic-oci-publication-envelope.md) | Atomic OCI image publication envelope | Accepted (owner authorized 2026-09-27) |

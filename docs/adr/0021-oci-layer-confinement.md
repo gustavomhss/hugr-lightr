@@ -1,9 +1,12 @@
 # ADR-0021 — OCI layer confinement and typed-link preservation
 
-- **Status:** Accepted (explicit owner decision, 2026-09-27)
+- **Status:** Accepted (owner Unix-first decision, 2026-09-27)
 - **Date:** 2026-09-27
-- **Scope:** OCI layer import and its private staging tree only.
-- **Evidence:** [issue #242](https://github.com/gmhelmold/hugr-lightr/issues/242), cold review of PR #241, and Linux validation run `36254198267` cited there.
+- **Scope:** OCI layer import and its private staging tree only; macOS and Linux
+  are target release scope pending issue #242 implementation and evidence.
+- **Evidence:** [issue #242](https://github.com/gmhelmold/hugr-lightr/issues/242),
+  [owner decision comment 5854246940](https://github.com/gmhelmold/hugr-lightr/issues/242#issuecomment-5854246940),
+  cold review of PR #241, and Linux validation run `36254198267` cited there.
 
 ## Context
 
@@ -20,6 +23,15 @@ layer semantics.
 
 ADR-0017's OCI symlink copy fallback is superseded **only for OCI layer import**.
 Its fallback remains unchanged for every other ADR-0017 scope.
+
+macOS and Linux OCI confinement are target release scope, pending implementation
+and evidence under issue #242; this ADR makes no shipped-behavior claim. Windows
+OCI layer import must return explicit `Unsupported` for that release until a
+separate native Windows qualification wave is accepted. Enforcement is pending a
+separate PR; this ADR makes no claim that current code returns `Unsupported`.
+It must not copy, skip, synthesize, or otherwise fall back while unsupported. This
+supersedes prior Windows-full and privilege decisions only for release timing;
+their fail-closed requirement remains binding.
 
 ### Unix layer apply
 
@@ -44,7 +56,11 @@ preserve file bytes/content identity, not POSIX inode or hardlink topology.
 files. This is an explicit owner decision dated 2026-09-27; it does not weaken
 traversal or link safety requirements above.
 
-### Windows layer apply
+### Future Windows layer apply
+
+Windows privileged-handle implementation and native runtime qualification are
+future work, not release blockers. Required `Unsupported` enforcement remains
+pending its separate PR. Once Windows OCI import is qualified, it must:
 
 1. Traverse descendants relative to named, opened directory handles. Every opened
    component forbids reparse points; no path-based check/use sequence is valid.
@@ -69,12 +85,13 @@ reopened by spelling.
 
 ## Consequences
 
-OCI import either preserves confined layer semantics or fails explicitly. It never
-silently weakens link safety or changes layer representation. Existing path
-traversal, symlink-component, hardlink-escape, and whiteout/delete mutation probes
-remain required evidence under issue #242.
+Target release behavior either preserves confined layer semantics or fails
+explicitly. It must never silently weaken link safety or change layer
+representation. Existing path traversal, symlink-component, hardlink-escape, and
+whiteout/delete mutation probes remain required evidence under issue #242.
 
-Actual Windows runtime qualification is mandatory before claiming this path works on
-Windows. Cross-compilation, static review, and non-Windows tests are not runtime
-qualification. Until native evidence exists, Windows behavior remains specified but
-unqualified.
+Windows `Unsupported` behavior is required for this release but pending
+enforcement; current code is not claimed to implement it. Cross-compilation,
+static review, and non-Windows tests are not native Windows runtime qualification.
+A later qualified implementation must meet the future Windows layer-apply
+requirements above; it must not introduce a copy fallback.
