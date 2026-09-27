@@ -35,6 +35,15 @@ Its fallback remains unchanged for every other ADR-0017 scope.
 5. Apply whiteouts and deletes only through confined no-follow handles. A whiteout
    or delete cannot follow or remove outside staging.
 
+### OCI staging and CAS snapshot boundary
+
+ADR-0021 requires confined layer apply to preserve staging hardlink identity;
+implementation remains pending under issue #242. Current CAS snapshot manifests
+preserve file bytes/content identity, not POSIX inode or hardlink topology.
+`hydrate` may therefore materialize formerly hardlinked paths as independent
+files. This is an explicit owner decision dated 2026-09-27; it does not weaken
+traversal or link safety requirements above.
+
 ### Windows layer apply
 
 1. Traverse descendants relative to named, opened directory handles. Every opened
