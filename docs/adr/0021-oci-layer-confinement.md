@@ -1,7 +1,7 @@
 # ADR-0021 — OCI layer confinement and typed-link preservation
 
-- **Status:** Accepted (explicit owner decision in this conversation, 2026-09-26)
-- **Date:** 2026-09-26
+- **Status:** Accepted (explicit owner decision, 2026-09-27)
+- **Date:** 2026-09-27
 - **Scope:** OCI layer import and its private staging tree only.
 - **Evidence:** [issue #242](https://github.com/gmhelmold/hugr-lightr/issues/242), cold review of PR #241, and Linux validation run `36254198267` cited there.
 
@@ -41,9 +41,11 @@ Its fallback remains unchanged for every other ADR-0017 scope.
    component forbids reparse points; no path-based check/use sequence is valid.
 2. Preserve typed links only when type is known. Reject ambiguous dangling-link type.
    Never copy, skip, or synthesize another link representation as fallback.
-3. Creating a preserved symbolic link requires Developer Mode or
-   `SeCreateSymbolicLinkPrivilege`. If neither is available, fail with explicit
-   unsupported/capability error; do not continue import.
+3. Safe handle-relative reparse creation requires
+   `SeCreateSymbolicLinkPrivilege`. Developer Mode alone is insufficient and
+   must not select path-based `CreateSymbolicLinkW`. If capability is absent,
+   fail with explicit unsupported/capability error; do not continue import,
+   copy, or skip.
 4. Reject device, FIFO, and socket layer entries as `Unsupported`.
 5. Before mutating staging, validate every layer path for case-fold collision,
    reserved Windows name, alternate data stream, and trailing dot/space ambiguity.
