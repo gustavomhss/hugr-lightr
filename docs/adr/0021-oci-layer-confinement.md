@@ -6,6 +6,7 @@
   are target release scope pending issue #242 implementation and evidence.
 - **Evidence:** [issue #242](https://github.com/gmhelmold/hugr-lightr/issues/242),
   [owner decision comment 5854246940](https://github.com/gmhelmold/hugr-lightr/issues/242#issuecomment-5854246940),
+  [owner cleanup threat-model decision 5857697058](https://github.com/gmhelmold/hugr-lightr/issues/242#issuecomment-5857697058),
   cold review of PR #241, and Linux validation run `36254198267` cited there.
 
 ## Context
@@ -57,6 +58,14 @@ preserve file bytes/content identity, not POSIX inode or hardlink topology.
 files. This is an explicit owner decision dated 2026-09-27; it does not weaken
 traversal or link safety requirements above.
 
+### Staging threat model
+
+This confinement protects against hostile archive input and local processes running
+as other UIDs. It does not claim confinement from a same-UID local filesystem
+adversary that can rename or write staging paths. Staging is a mode `0700`
+directory created under a sticky temporary parent. No privileged cleanup helper is
+selected.
+
 ### Future Windows layer apply
 
 Windows privileged-handle implementation and native runtime qualification are
@@ -81,7 +90,8 @@ future work, not release blockers. Once Windows OCI import is qualified, it must
 Publish ref is final visibility action. Any validation, traversal, mutation,
 materialization, or cleanup failure leaves publish ref unadvanced. Cleanup acts only
 on staging identity and handles created by this import; it must not clean a path
-reopened by spelling.
+reopened by spelling. Automatic cleanup is permitted when it identity-checks that
+same import's staging object before removal.
 
 ## Consequences
 
