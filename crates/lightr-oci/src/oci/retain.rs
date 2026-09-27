@@ -5,7 +5,7 @@
 //! synthesize a single collapsed layer. This module RETAINS, at pull AND
 //! import time, the original raw (compressed) layer blobs + the original
 //! manifest JSON bytes + the ordered descriptors (mediaType/digest/size) + the
-//! platform — stored as one [`ImageManifestRecord`] via `Store::image_manifest_put`
+//! platform — published in one [`ImageManifestRecord`] Store envelope
 //! — so the future faithful push (WP-IMG-02) can reproduce the pulled image
 //! byte-for-byte.
 //!
@@ -36,19 +36,16 @@ pub(super) struct RetainBlob<'a> {
 
 /// Verify each blob (fail-closed), retain its raw bytes in the CAS, and store
 /// one faithful [`ImageManifestRecord`] for `name` (config + layers in the
-/// given order). Idempotent: a re-pull/-import of the same image overwrites the
-/// record (last-write-wins) with identical content — CAS `put_bytes` dedups the
-/// blobs, `image_manifest_put` replaces the sidecar.
+/// given order. Returned record is prepared for atomic image-ref publication.
 ///
 /// `manifest_bytes` is the original manifest JSON verbatim; `platform` is e.g.
 /// `"linux/amd64"` (empty ⇒ unspecified). `blobs` are retained in order.
 pub(super) fn retain_image_manifest(
     store: &Store,
-    name: &str,
     manifest_bytes: &[u8],
     platform: &str,
     blobs: &[RetainBlob<'_>],
-) -> Result<()> {
+) -> Result<ImageManifestRecord> {
     let mut descriptors = Vec::with_capacity(blobs.len());
     for b in blobs {
         // Verify-then-retain: a declared sha256 that does not match the bytes is
@@ -66,10 +63,9 @@ pub(super) fn retain_image_manifest(
         });
     }
 
-    let rec = ImageManifestRecord {
+    Ok(ImageManifestRecord {
         manifest_bytes: manifest_bytes.to_vec(),
         descriptors,
         platform: platform.to_string(),
-    };
-    store.image_manifest_put(name, &rec)
+    })
 }

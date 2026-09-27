@@ -86,7 +86,7 @@ pub(super) struct OciIndex {
 pub(super) struct OciManifest {
     pub(super) layers: Vec<OciDescriptor>,
     /// The image config descriptor (entrypoint/cmd/env/os/arch live in this
-    /// blob). Captured at pull/import + stored via `Store::image_config_put` so
+    /// blob). Captured at pull/import + published in Store image envelope so
     /// `oci push` re-emits a runnable image. `#[serde(default)]`: a manifest
     /// without it (or an unparsable one) yields an empty descriptor → skipped.
     #[serde(default)]

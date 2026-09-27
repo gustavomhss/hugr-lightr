@@ -187,6 +187,16 @@ impl Store {
         store::image_ref::publish_prepared_image_ref(&self.root, rec, prepared)
     }
 
+    /// Remove one image ref. Legacy sidecar cleanup remains inside Store.
+    pub fn remove_image_ref(&self, name: &str) -> Result<bool> {
+        let legacy = store::image_ref::envelope_for(&self.root, name)?.is_none();
+        let removed = store::refs::ref_remove(&self.root, name)?;
+        if removed && legacy {
+            store::imgmeta::remove_image_sidecars(&self.root, name)?;
+        }
+        Ok(removed)
+    }
+
     // ── imgmeta ──────────────────────────────────────────────────────────────
 
     /// Store the original OCI image config JSON for `name` (push-fidelity).

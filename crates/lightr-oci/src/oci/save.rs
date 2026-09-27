@@ -43,13 +43,13 @@ const OCI_CONFIG_MEDIA_TYPE: &str = "application/vnd.oci.image.config.v1+json";
 /// (lossy fallback from the CAS tree).
 pub fn save(name: &str, output: Option<&Path>, store: &Store) -> Result<SaveReport> {
     // Resolve the ref first — fail-closed if absent (never an empty tar).
-    let rec = store
-        .ref_get(name)?
+    let image = store
+        .image_ref_get(name)?
         .ok_or_else(|| LightrError::RefNotFound(name.to_string()))?;
 
-    let (tar_bytes, layers, faithful) = match store.image_manifest_get(name)? {
+    let (tar_bytes, layers, faithful) = match image.manifest {
         Some(record) => build_faithful_tar(store, &record)?,
-        None => build_synth_tar(store, &rec.root)?,
+        None => build_synth_tar(store, &image.record.root)?,
     };
 
     let size = tar_bytes.len() as u64;

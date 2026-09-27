@@ -343,15 +343,16 @@ fn for_each_sidecar_pointer(root: &Path, dir: &str, mut f: impl FnMut(Digest)) {
     }
 }
 
-/// WP-IMG-09: enumerate EVERY CAS digest kept alive by the image sidecars, so
-/// the gc mark-walk can mark them reachable (else gc reaps faithful-push blobs).
+/// WP-IMG-09: enumerate every image CAS digest that GC must retain. LOCIE1
+/// envelopes are authoritative and fail closed on a missing or malformed body;
+/// legacy sidecar enumeration remains fail-soft for compatibility.
 ///
 /// Returns: every `imgmanifest` record-blob digest + each of its descriptor
 /// digests (config + layers) + every `imgmeta` config-blob digest. Order is
 /// unspecified; duplicates are possible (the caller dedups via its mark set).
 /// Fail-soft: corrupt/undecodable sidecars are skipped, never fatal.
 pub fn list_image_reachable_blobs(root: &Path) -> Result<Vec<Digest>> {
-    let mut out: Vec<Digest> = Vec::new();
+    let mut out = super::image_ref::envelope_reachable_blobs(root)?;
 
     // imgmanifest sidecars: mark the record blob AND every descriptor blob.
     for_each_sidecar_pointer(root, "imgmanifest", |record_digest| {

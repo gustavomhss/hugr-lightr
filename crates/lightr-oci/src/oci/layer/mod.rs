@@ -150,6 +150,7 @@ pub(super) fn apply_layers(tempdir: &Path, blobs: &[LayerBlob]) -> Result<()> {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Create a fresh tempdir, apply the blobs, snapshot, return report.
+#[cfg(test)]
 pub(super) fn apply_and_snapshot(
     blobs: Vec<LayerBlob>,
     layer_count: u64,
@@ -171,6 +172,39 @@ pub(super) fn apply_and_snapshot(
 
     let report = lightr_index::snapshot(&tempdir, store, name)?;
 
+    Ok(super::model::ImportReport {
+        name: name.to_string(),
+        root: report.root,
+        layers: layer_count,
+        files: report.files,
+    })
+}
+
+/// OCI import publishes captured config, manifest record, and snapshot ref as
+/// one Store envelope after every body and tree object is ready.
+pub(super) fn apply_and_publish_image(
+    blobs: Vec<LayerBlob>,
+    layer_count: u64,
+    store: &Store,
+    name: &str,
+    config: &[u8],
+    image_manifest: &lightr_store::ImageManifestRecord,
+) -> Result<super::model::ImportReport> {
+    use super::util::TempDirGuard;
+
+    let pid = std::process::id();
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.subsec_nanos())
+        .unwrap_or(0);
+    let tempdir = std::env::temp_dir().join(format!("lightr-oci-{pid}-{nanos}"));
+    fs::create_dir_all(&tempdir).map_err(LightrError::Io)?;
+    let _guard = TempDirGuard(tempdir.clone());
+
+    apply_layers(&tempdir, &blobs)?;
+    let report = lightr_index::snapshot_with_publisher(&tempdir, store, name, |rec| {
+        store.publish_image_ref(rec, Some(config), Some(image_manifest))
+    })?;
     Ok(super::model::ImportReport {
         name: name.to_string(),
         root: report.root,

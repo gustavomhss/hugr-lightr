@@ -48,10 +48,10 @@ use std::fs;
 /// registries (whose config creds already carry write perms).
 pub fn push(name: &str, target: &str, store: &Store) -> Result<PushReport> {
     // a. Resolve the local ref → Manifest (fail-closed if missing).
-    let rec = store
-        .ref_get(name)?
+    let image = store
+        .image_ref_get(name)?
         .ok_or_else(|| LightrError::RefNotFound(name.to_string()))?;
-    let manifest_bytes = store.get_bytes(&rec.root)?;
+    let manifest_bytes = store.get_bytes(&image.record.root)?;
     let tree = Manifest::decode(&manifest_bytes)?;
 
     // Parse/validate the target ref (empty/bad → InvalidRef → exit 2).
@@ -81,7 +81,7 @@ pub fn push(name: &str, target: &str, store: &Store) -> Result<PushReport> {
     // synthesized layer's diff_id (the original diff_ids described the original
     // layers, which we collapsed into one). Otherwise (a `snapshot`'d ref, or a
     // ref pulled before push-fidelity) synthesize a minimal Linux config.
-    let config_bytes = match store.image_config_get(name)? {
+    let config_bytes = match image.config {
         Some(orig) => {
             let mut v: serde_json::Value = serde_json::from_slice(&orig).map_err(|e| {
                 LightrError::InvalidManifest(format!("stored image config parse error: {e}"))

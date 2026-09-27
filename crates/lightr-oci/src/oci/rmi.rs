@@ -37,7 +37,7 @@ pub struct RmiReport {
 /// the CAS blobs are left as gc candidates.
 pub fn rmi_one(store: &Store, name: &str, in_use: &[String], force: bool) -> Result<RmiReport> {
     // Absent ⇒ "No such image" (fail-closed, exit 2 via RefNotFound).
-    if store.ref_get(name)?.is_none() {
+    if store.image_ref_get(name)?.is_none() {
         return Err(LightrError::RefNotFound(name.to_string()));
     }
 
@@ -53,8 +53,7 @@ pub fn rmi_one(store: &Store, name: &str, in_use: &[String], force: bool) -> Res
 
     // Untag: drop the ref + name record, then the image sidecars. The CAS
     // objects are intentionally left in place (gc candidates).
-    store.ref_remove(name)?;
-    store.remove_image_sidecars(name)?;
+    store.remove_image_ref(name)?;
 
     Ok(RmiReport {
         name: name.to_string(),

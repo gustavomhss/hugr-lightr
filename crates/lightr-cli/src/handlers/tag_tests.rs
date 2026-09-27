@@ -10,6 +10,11 @@ use lightr_store::Store;
 
 use crate::handlers::testref::store_with_ref;
 
+fn current_ref_bytes(store: &Store, name: &str) -> Vec<u8> {
+    let key = lightr_core::ref_key(name).to_hex();
+    std::fs::read(store.root().join("refs").join(&key[..2]).join(&key[2..])).unwrap()
+}
+
 #[test]
 fn tag_aliases_manifest_under_new_name() {
     let (_tmp, store) = store_with_ref("src", b"data");
@@ -24,6 +29,10 @@ fn tag_aliases_manifest_under_new_name() {
         "alias shares the source manifest digest"
     );
     assert!(store.ref_get("src").unwrap().is_some(), "src is unchanged");
+    assert!(
+        current_ref_bytes(&store, "alias").starts_with(b"\0\0LOCIE1"),
+        "tag must publish destination through atomic image envelope"
+    );
 }
 
 #[test]

@@ -17,23 +17,51 @@ pub struct SnapshotReport {
 }
 
 pub fn snapshot(root: &Path, store: &Store, name: &str) -> Result<SnapshotReport> {
+    snapshot_with_publisher(root, store, name, |rec| store.ref_put(rec))
+}
+
+/// Snapshot then publish its prepared ref through caller-selected Store seam.
+/// OCI uses this to make its ref and retained metadata one visibility action.
+pub fn snapshot_with_publisher<F>(
+    root: &Path,
+    store: &Store,
+    name: &str,
+    publish: F,
+) -> Result<SnapshotReport>
+where
+    F: FnOnce(&RefRecord) -> Result<()>,
+{
     lightr_core::validate_ref_name(name)?;
 
     let mut index = Index::load_for(root)?;
     let walk = scan(root, &mut index)?;
-    publish_snapshot(root, store, name, walk.manifest)
+    publish_snapshot_with(root, store, name, walk.manifest, publish)
 }
 
-/// Publish a captured manifest only after every required ingestion succeeds.
-/// A live source may change after scan: reject a digest mismatch rather than
-/// publishing a ref whose manifest names bytes we did not preserve. This is not
-/// a point-in-time filesystem snapshot; the caller may retry after a mutation.
+#[cfg(test)]
 fn publish_snapshot(
     root: &Path,
     store: &Store,
     name: &str,
     manifest: Manifest,
 ) -> Result<SnapshotReport> {
+    publish_snapshot_with(root, store, name, manifest, |rec| store.ref_put(rec))
+}
+
+/// Publish a captured manifest only after every required ingestion succeeds.
+/// A live source may change after scan: reject a digest mismatch rather than
+/// publishing a ref whose manifest names bytes we did not preserve. This is not
+/// a point-in-time filesystem snapshot; the caller may retry after a mutation.
+fn publish_snapshot_with<F>(
+    root: &Path,
+    store: &Store,
+    name: &str,
+    manifest: Manifest,
+    publish: F,
+) -> Result<SnapshotReport>
+where
+    F: FnOnce(&RefRecord) -> Result<()>,
+{
     // Per-object write guards alone leave a gap before ref publication in which
     // gc could sweep newly ingested objects. Keep one shared guard across the
     // whole transaction, including reuse of existing objects and the manifest.
@@ -86,7 +114,7 @@ fn publish_snapshot(
         created_at_unix,
         tool_version: env!("CARGO_PKG_VERSION").to_string(),
     };
-    store.ref_put(&rec)?;
+    publish(&rec)?;
 
     Ok(SnapshotReport {
         root: manifest_digest,

@@ -56,8 +56,8 @@ pub fn run(src: &str, dst: &str) -> i32 {
 /// Returns `RefNotFound(src)` if `src` is absent (fail-closed; no silent empty
 /// alias). On success the alias ref is written and the image sidecars copied.
 pub(crate) fn tag_in_store(store: &Store, src: &str, dst: &str) -> lightr_core::Result<()> {
-    let src_rec = store
-        .ref_get(src)?
+    let source = store
+        .image_ref_get(src)?
         .ok_or_else(|| LightrError::RefNotFound(src.to_string()))?;
 
     let created_at_unix = SystemTime::now()
@@ -66,19 +66,14 @@ pub(crate) fn tag_in_store(store: &Store, src: &str, dst: &str) -> lightr_core::
         .unwrap_or(0);
     let dst_rec = RefRecord {
         name: dst.to_string(),
-        root: src_rec.root,
+        root: source.record.root,
         // The alias derives from src — record src's root as the parent and keep
         // the original tool_version (the image was built by that version).
-        parent: Some(src_rec.root),
+        parent: Some(source.record.root),
         created_at_unix,
-        tool_version: src_rec.tool_version.clone(),
+        tool_version: source.record.tool_version,
     };
-    store.ref_put(&dst_rec)?;
-
-    // Share the image sidecars so the alias stays faithfully pushable. No-op if
-    // src has no sidecar (tag still works). Shares CAS blobs — no duplication.
-    store.copy_image_sidecars(src, dst)?;
-    Ok(())
+    store.publish_image_ref(&dst_rec, source.config.as_deref(), source.manifest.as_ref())
 }
 
 #[cfg(test)]

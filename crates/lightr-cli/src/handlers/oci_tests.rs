@@ -70,6 +70,11 @@ fn tmp_store() -> (tempfile::TempDir, Store) {
     (dir, store)
 }
 
+fn current_ref_bytes(store: &Store, name: &str) -> Vec<u8> {
+    let key = lightr_core::ref_key(name).to_hex();
+    std::fs::read(store.root().join("refs").join(&key[..2]).join(&key[2..])).unwrap()
+}
+
 fn seed_ref(store: &Store, name: &str, seed: &[u8]) -> Digest {
     let root = Digest::of_bytes(seed);
     let rec = RefRecord {
@@ -161,6 +166,10 @@ fn tag_copies_sidecars() {
         .unwrap()
         .expect("manifest sidecar must be copied to dst");
     assert_eq!(dst_manifest, rec, "copied manifest record must match src");
+    assert!(
+        current_ref_bytes(&store, "@t/dst").starts_with(b"\0\0LOCIE1"),
+        "oci tag must publish ref and OCI metadata through one envelope"
+    );
 }
 
 #[test]

@@ -63,11 +63,10 @@ pub(crate) fn rmi_in_store(store: &Store, targets: &[String]) -> i32 {
 ///     candidates, never swept here).
 fn remove_one(store: &Store, name: &str) -> lightr_core::Result<()> {
     use lightr_core::LightrError;
-    if store.ref_get(name)?.is_none() {
+    if store.image_ref_get(name)?.is_none() {
         return Err(LightrError::RefNotFound(name.to_string()));
     }
-    store.ref_remove(name)?;
-    store.remove_image_sidecars(name)?;
+    store.remove_image_ref(name)?;
     Ok(())
 }
 

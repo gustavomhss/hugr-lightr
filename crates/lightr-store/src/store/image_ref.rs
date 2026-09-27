@@ -27,7 +27,7 @@ pub struct ImageRef {
 }
 
 #[derive(Clone, Debug)]
-pub(super) struct Envelope {
+pub(crate) struct Envelope {
     pub record: RefRecord,
     pub prepared: PreparedImageRef,
 }
@@ -199,8 +199,37 @@ pub fn publish_prepared_image_ref(
     refs::ref_put_encoded(root, rec, &encode_envelope(rec, &prepared)?)
 }
 
-pub(super) fn envelope_for(root: &Path, name: &str) -> Result<Option<Envelope>> {
+pub(crate) fn envelope_for(root: &Path, name: &str) -> Result<Option<Envelope>> {
     read_envelope(root, name)
+}
+
+/// Return every CAS body retained by current LOCIE1 envelopes. Unlike legacy
+/// sidecars, an envelope is authoritative: an unreadable body makes GC stop
+/// before sweep rather than reclaiming a still-referenced closure.
+pub(crate) fn envelope_reachable_blobs(root: &Path) -> Result<Vec<Digest>> {
+    let mut out = Vec::new();
+    for name in refs::list_refs(root)? {
+        let Some(envelope) = envelope_for(root, &name)? else {
+            continue;
+        };
+        if let Some(digest) = envelope.prepared.config {
+            require_body(root, digest)?;
+            out.push(digest);
+        }
+        if let Some(digest) = envelope.prepared.manifest {
+            let body = require_body(root, digest)?;
+            let record = decode_manifest_record(&body)
+                .map_err(|e| malformed(format!("invalid manifest body: {e}")))?;
+            out.push(digest);
+            out.extend(
+                record
+                    .descriptors
+                    .into_iter()
+                    .map(|descriptor| descriptor.digest),
+            );
+        }
+    }
+    Ok(out)
 }
 
 #[cfg(test)]

@@ -4,7 +4,7 @@ use super::http::{
     net_agent, read_creds_for_registry, read_response_bytes, retry_request, stream_blob_to_file,
 };
 use super::import::preflight_oci_layer_import;
-use super::layer::{apply_and_snapshot, LayerBlob};
+use super::layer::{apply_and_publish_image, LayerBlob};
 use super::model::{ImportReport, ManifestList, OciManifest};
 use super::reference::{fetch_docker_token, parse_image_ref, pick_from_manifest_list};
 use super::retain::{retain_image_manifest, RetainBlob};
@@ -202,19 +202,16 @@ pub fn pull(image: &str, store: &Store, name: &str) -> Result<ImportReport> {
         blobs.push(LayerBlob::File(blob_file));
     }
 
-    // Metadata writes are part of success path, never ignored. Complete before
-    // snapshot publishes ref so metadata failures cannot leave accepted ref.
-    store.image_config_put(name, &cfg_bytes)?;
-    retain_pulled(
+    let image_manifest = retain_pulled(
         store,
-        name,
         &image_manifest_bytes,
         &platform,
         &config_file,
         &layer_files,
     )?;
 
-    let report = apply_and_snapshot(blobs, layer_count, store, name)?;
+    let report =
+        apply_and_publish_image(blobs, layer_count, store, name, &cfg_bytes, &image_manifest)?;
 
     Ok(report)
 }
@@ -228,18 +225,17 @@ struct RetainSource {
     size: u64,
 }
 
-/// Read each retained blob back from its temp file and store one faithful
+/// Read each retained blob back from its temp file and prepare one faithful
 /// [`ImageManifestRecord`] (config first, then layers in order). A digest
 /// MISMATCH is fail-closed (propagated); a read I/O error is best-effort
 /// (skipped — push falls back) since the image is already snapshotted.
 fn retain_pulled(
     store: &Store,
-    name: &str,
     manifest_bytes: &[u8],
     platform: &str,
     config_file: &RetainSource,
     layer_files: &[RetainSource],
-) -> Result<()> {
+) -> Result<lightr_store::ImageManifestRecord> {
     let mut buffers: Vec<(Vec<u8>, &RetainSource)> = Vec::new();
     let cfg_bytes = fs::read(&config_file.path).map_err(LightrError::Io)?;
     buffers.push((cfg_bytes, config_file));
@@ -256,5 +252,5 @@ fn retain_pulled(
             bytes: bytes.as_slice(),
         })
         .collect();
-    retain_image_manifest(store, name, manifest_bytes, platform, &blobs)
+    retain_image_manifest(store, manifest_bytes, platform, &blobs)
 }

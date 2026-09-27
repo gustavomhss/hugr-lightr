@@ -12,6 +12,7 @@
 #![cfg(test)]
 
 use crate::index::gc::gc;
+use lightr_core::{LightrError, Manifest, RefRecord};
 use lightr_store::{ImageDescriptor, ImageManifestRecord, Store};
 use tempfile::TempDir;
 
@@ -155,4 +156,103 @@ fn retained_image_config_sidecar_blob_survives_gc() {
         "captured image-config blob must survive gc and read back identically"
     );
     assert!(!store.exists(&orphan), "orphan must still be reaped");
+}
+
+#[test]
+fn envelope_image_closure_survives_gc_orphan_reaped() {
+    let dir = TempDir::new().unwrap();
+    let store = Store::open(dir.path().join("store")).unwrap();
+    let config = br#"{"architecture":"amd64","os":"linux"}"#;
+    let layer = b"envelope-retained-layer";
+    let config_digest = store.put_bytes(config).unwrap();
+    let layer_digest = store.put_bytes(layer).unwrap();
+    let root = store
+        .put_bytes(
+            &Manifest {
+                version: 1,
+                total_size: 0,
+                entries: vec![],
+            }
+            .encode(),
+        )
+        .unwrap();
+    let image_manifest = ImageManifestRecord {
+        manifest_bytes: br#"{"schemaVersion":2,"layers":[]}"#.to_vec(),
+        descriptors: vec![
+            ImageDescriptor {
+                media_type: "application/vnd.oci.image.config.v1+json".into(),
+                digest: config_digest,
+                size: config.len() as u64,
+            },
+            ImageDescriptor {
+                media_type: "application/vnd.oci.image.layer.v1.tar+gzip".into(),
+                digest: layer_digest,
+                size: layer.len() as u64,
+            },
+        ],
+        platform: "linux/amd64".into(),
+    };
+    let record = RefRecord {
+        name: "envelope-img".into(),
+        root,
+        parent: None,
+        created_at_unix: 1,
+        tool_version: "test".into(),
+    };
+    store
+        .publish_image_ref(&record, Some(config), Some(&image_manifest))
+        .unwrap();
+    let orphan = store.put_bytes(b"unreachable-envelope-orphan").unwrap();
+
+    gc(&store, false, 0).unwrap();
+
+    let image = store.image_ref_get("envelope-img").unwrap().unwrap();
+    assert_eq!(image.config.as_deref(), Some(config.as_slice()));
+    assert_eq!(image.manifest, Some(image_manifest));
+    assert!(store.exists(&config_digest));
+    assert!(store.exists(&layer_digest));
+    assert!(!store.exists(&orphan));
+}
+
+#[test]
+fn missing_envelope_body_blocks_gc_sweep() {
+    let dir = TempDir::new().unwrap();
+    let store = Store::open(dir.path().join("store")).unwrap();
+    let root = store
+        .put_bytes(
+            &Manifest {
+                version: 1,
+                total_size: 0,
+                entries: vec![],
+            }
+            .encode(),
+        )
+        .unwrap();
+    let record = RefRecord {
+        name: "broken-envelope".into(),
+        root,
+        parent: None,
+        created_at_unix: 1,
+        tool_version: "test".into(),
+    };
+    store
+        .publish_image_ref(&record, Some(b"config"), None)
+        .unwrap();
+    let image = store.image_ref_get("broken-envelope").unwrap().unwrap();
+    let config_digest = lightr_core::Digest::of_bytes(image.config.as_deref().unwrap());
+    store.remove_object(&config_digest).unwrap();
+    let orphan = store
+        .put_bytes(b"must-not-sweep-after-envelope-error")
+        .unwrap();
+
+    let error = match gc(&store, false, 0) {
+        Ok(_) => panic!("missing envelope body must block GC"),
+        Err(error) => error,
+    };
+    assert!(matches!(
+        error,
+        LightrError::InvalidManifest(message)
+            if message.starts_with("malformed LOCIE1 envelope: missing or invalid pointed-to CAS body:")
+    ));
+    assert!(store.exists(&orphan), "failed mark phase must not sweep");
 }

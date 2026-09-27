@@ -1,7 +1,7 @@
 //! WP-IMG-08 — `oci history`: per-layer image history (docker `history`).
 //!
 //! Reproduces `docker history`'s shape from the OCI image config we RETAIN at
-//! pull/import (WP-IMG-01: the config sidecar via [`Store::image_config_get`]).
+//! pull/import (WP-IMG-01: captured config from [`Store::image_ref_get`]).
 //! An OCI image config carries an ordered `history` array — one entry per build
 //! step — where every entry has a `created_by` (the instruction that produced
 //! it) and may be flagged `empty_layer: true` (a metadata-only step that added
@@ -86,12 +86,11 @@ struct ConfigHistoryEntry {
 /// renders them top-to-bottom.
 pub fn image_history(store: &Store, name: &str) -> Result<Vec<HistoryRow>> {
     // 1. Fail-closed on an absent ref (exit 2). An empty name is an absent ref.
-    if store.ref_get(name)?.is_none() {
-        return Err(LightrError::RefNotFound(name.to_string()));
-    }
-
-    let config = store.image_config_get(name)?;
-    let record = store.image_manifest_get(name)?;
+    let image = store
+        .image_ref_get(name)?
+        .ok_or_else(|| LightrError::RefNotFound(name.to_string()))?;
+    let config = image.config;
+    let record = image.manifest;
     let layer_sizes = layer_sizes(record.as_ref());
 
     // Parse the config's history array (fail-soft: a corrupt config ⇒ treated as

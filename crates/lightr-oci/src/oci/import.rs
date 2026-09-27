@@ -1,6 +1,6 @@
 //! OCI layout dir and docker-save tar import.
 
-use super::layer::{apply_and_snapshot, LayerBlob};
+use super::layer::{apply_and_publish_image, LayerBlob};
 use super::model::{DockerSaveItem, ImportReport, OciIndex, OciManifest};
 use super::reference::pick_from_manifest_list;
 use super::retain::{retain_image_manifest, RetainBlob};
@@ -136,17 +136,16 @@ pub(super) fn import_oci_layout_dir(
     }
 
     // Validate and retain all descriptor content before snapshot can publish ref.
-    store.image_config_put(name, &cfg_bytes)?;
-    retain_owned(
+    let image_manifest = retain_owned(
         store,
-        name,
         &manifest_bytes,
         &platform,
         Some(config_blob),
         retained,
     )?;
 
-    let report = apply_and_snapshot(blobs, layer_count, store, name)?;
+    let report =
+        apply_and_publish_image(blobs, layer_count, store, name, &cfg_bytes, &image_manifest)?;
 
     Ok(report)
 }
@@ -161,15 +160,14 @@ struct RetainOwned {
 }
 
 /// Build the borrowed [`RetainBlob`] view over owned buffers (config first,
-/// then layers) and store one faithful [`ImageManifestRecord`].
+/// then layers) and prepare one faithful [`ImageManifestRecord`].
 fn retain_owned(
     store: &Store,
-    name: &str,
     manifest_bytes: &[u8],
     platform: &str,
     config_blob: Option<RetainOwned>,
     layers: Vec<RetainOwned>,
-) -> Result<()> {
+) -> Result<lightr_store::ImageManifestRecord> {
     let mut owned: Vec<RetainOwned> = Vec::with_capacity(layers.len() + 1);
     if let Some(cfg) = config_blob {
         owned.push(cfg);
@@ -184,7 +182,7 @@ fn retain_owned(
             bytes: o.bytes.as_slice(),
         })
         .collect();
-    retain_image_manifest(store, name, manifest_bytes, platform, &blobs)
+    retain_image_manifest(store, manifest_bytes, platform, &blobs)
 }
 
 pub(super) fn import_docker_save_tar(
@@ -338,17 +336,16 @@ pub(super) fn import_docker_save_tar(
         blobs.push(LayerBlob::Bytes(data));
     }
 
-    store.image_config_put(name, &cfg_bytes)?;
-    retain_owned(
+    let image_manifest = retain_owned(
         store,
-        name,
         &manifest_bytes,
         &platform,
         Some(config_blob),
         retained,
     )?;
 
-    let report = apply_and_snapshot(blobs, layer_count, store, name)?;
+    let report =
+        apply_and_publish_image(blobs, layer_count, store, name, &cfg_bytes, &image_manifest)?;
 
     Ok(report)
 }
