@@ -168,7 +168,8 @@ que entregar o produto full, nao ficar me enchendo o saco"
    cross-compile-clean + per-platform runbook.
 3. Windows tier built from zero (no cfg(windows) existed): native core port
    (locks/fsync/ctl-socket/CoW-ReFS/symlinks/perms), wsl isolation engine,
-   5-target CI/release matrix. ADR-0017 + build-spec-omni frozen.
+   5-target CI matrix; #187 later narrowed initial public artifacts to macOS
+   arm64 and Linux x86_64. ADR-0017 + build-spec-omni frozen.
 4. Delivered via a 7-WP disjoint-by-crate fleet (git worktrees, zero merge
    conflicts), model-routed (sonnet mechanical; opus for RUN named-pipes +
    ENGINE WSL2).

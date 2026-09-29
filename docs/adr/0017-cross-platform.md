@@ -47,9 +47,10 @@ permissions, symlinks, and process control — a bounded seam set.
 4. **FFI via `windows-sys`, target-gated per crate** (`[target.'cfg(windows)'.
    dependencies]`) so it never enters unix builds; prefer std (`symlink_file`,
    `sync_all`) over raw FFI where it suffices.
-5. **Distribution = 5-target matrix:** macOS arm64 + x86_64 (x86 cross-built on
-   the arm64 runner), Linux x86_64 + aarch64 (cross-linked), Windows x86_64
-   (`.zip`). Ad-hoc local signing with the **virtualization entitlement**
+5. **CI coverage = 5-target matrix:** macOS arm64 + x86_64 (x86 cross-built on
+   the arm64 runner), Linux x86_64 + aarch64 (cross-linked), Windows x86_64.
+   This is not a public artifact or support matrix: #187 limits initial public
+   artifacts to macOS arm64 and Linux x86_64. Ad-hoc local signing with the **virtualization entitlement**
    (`packaging/vz.entitlements`) runs `vz` locally with no Apple account.
    Carrying that entitlement on a Developer-ID-**notarized** release is a
    *restricted* entitlement that Apple must provision for the team — to be

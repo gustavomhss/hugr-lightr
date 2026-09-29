@@ -140,8 +140,8 @@ Rosetta-in-VM (arm64), VZ save/restore (arm64), views runtime (S1/S3).
 ## Lead-owned (NOT delegated)
 
 Root `Cargo.toml` (windows-sys — done) · `.github/workflows/{ci,release}.yml`
-(5-target matrix: macos x86_64/arm64, linux x86_64/aarch64, windows x86_64; zip
-on Windows, tarball unix; checksums; signing gated) · `lightr-cli` touch-ups ·
+(historical 5-target CI plan; #187 supersedes public artifacts with macOS arm64
+and Linux x86_64 only; checksums; signing gated) · `lightr-cli` touch-ups ·
 `lightr-acceptance` test cfg-guards (symlink/perms test sites → `#[cfg(unix)]`) ·
 workspace-wide windows cross-check · **vz entitlement + ad-hoc codesign**
 (`packaging/vz.entitlements` + codesign step in run-s5/release — required by vz on

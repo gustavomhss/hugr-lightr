@@ -8,7 +8,8 @@
 #   1. Builds --release for the host target
 #   2. Strips the binary
 #   3. Computes sha256
-#   4. Produces packaging/dist/lightr-<version>-<os>-<arch>.tar.gz
+#   4. Produces only Unix-first public-matrix artifacts:
+#      Linux x86_64 or macOS arm64 (macOS is explicitly -unsigned locally)
 #   5. Prints the sha256 (needed for Homebrew formula + install.sh)
 #   6. Prints a reminder that publishing is gated on ADR-0008
 #
@@ -82,7 +83,18 @@ case "$ARCH_RAW" in
     *)             echo "ERROR: unsupported arch: $ARCH_RAW" >&2; exit 1 ;;
 esac
 
-TARBALL_NAME="${BINARY_NAME}-${VERSION}-${OS_TAG}-${ARCH_TAG}.tar.gz"
+case "$OS_TAG:$ARCH_TAG" in
+    darwin:arm64|linux:x86_64) ;;
+    darwin:*) echo "ERROR: initial public artifacts support macOS arm64 only" >&2; exit 1 ;;
+    linux:*) echo "ERROR: initial public artifacts support Linux x86_64 only" >&2; exit 1 ;;
+esac
+
+UNSIGNED_SUFFIX=""
+if [ "$OS_TAG" = "darwin" ]; then
+    # This local recipe does not sign or notarize. Preserve that fact in name.
+    UNSIGNED_SUFFIX="-unsigned"
+fi
+TARBALL_NAME="${BINARY_NAME}-${VERSION}-${OS_TAG}-${ARCH_TAG}${UNSIGNED_SUFFIX}.tar.gz"
 CHECKSUM_NAME="${TARBALL_NAME}.sha256"
 
 # ---------------------------------------------------------------------------
@@ -152,7 +164,7 @@ echo ""
 echo "artifact ready at $TARBALL_PATH"
 echo "sha256: $SHA256"
 echo ""
-echo "=> Update packaging/install.sh and packaging/lightr.rb with the above sha256."
+echo "=> Record artifact and sha256 in R1/R2 receipt; do not alter templates during R0."
 echo ""
 echo "PUBLISHING IS GATED (ADR-0008): do not run 'gh release create' or upload"
 echo "any artifact until docs/adr/0008-license.md is status: Accepted."

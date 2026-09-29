@@ -130,7 +130,9 @@ R0 candidate freeze and artifact scope
   `bash packaging/release.sh`, and
   `bash spikes/s5-vz-boot-arm64/run-s5-arm64.sh`.
 - Verify artifact filename, architecture, executable identity, checksum, and
-  signing status as signed/notarized or explicitly unsigned.
+  signing status as signed/notarized or explicitly unsigned. Bind receipt to
+  frozen source SHA, binary SHA-256, `aarch64-apple-darwin`, and
+  `lightr-cli --features vz`; Intel execution or a binary without `vz` fails R2.
 - Expected candidate artifact is
   `packaging/dist/lightr-<version>-darwin-arm64[-unsigned].tar.gz` plus its
   `.sha256` file. Record hardware identity, all command outputs, artifact

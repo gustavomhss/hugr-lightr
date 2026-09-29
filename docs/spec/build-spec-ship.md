@@ -1,7 +1,9 @@
 # Build Spec — Ship + VM + Views wave (FROZEN)
 
-- **Status:** FROZEN (owner "fazer tudo em paralelo" mandate, 2026-06-12).
-  Additive; all prior surfaces unchanged. 5 disjoint WPs.
+- **Status:** FROZEN historical implementation plan (owner "fazer tudo em
+  paralelo" mandate, 2026-06-12). Its release-matrix text is superseded for
+  public artifacts by #187 and `docs/plans/unix-first-go-live.md`: only macOS
+  arm64 and Linux x86_64 may be public artifacts; tags create no assets.
 - **Honesty law (inviolable):** views (W5) and the vz boot (W3/W4) cannot be
   runtime-validated on this Intel box. Same bar as `lightr-init`/`vz`:
   code-complete + host-testable seams + compiles + lints, with runtime
@@ -11,10 +13,11 @@
 
 Goal: Product A can be cut into a release the moment the GTM gate clears —
 no core work, only release engineering.
-- `.github/workflows/release.yml`: trigger on tag `v*`. Matrix build
-  (macos-14 arm64, macos-13 x86_64, ubuntu x86_64) → `cargo build --release`
-  → strip → `lightr-<version>-<os>-<arch>.tar.gz` + sha256 → upload as a
-  GitHub Release. **Signing/notarization steps are present but GATED behind
+- Historical implementation superseded: current `release.yml` is manual
+  dispatch against frozen SHA + existing tag, and `G-PUBLISH` environment
+  approval precedes every remote upload/release. Current matrix builds macOS
+  arm64 with `--features vz` and Linux x86_64 only. **Signing/notarization
+  steps are present but GATED behind
   secrets** (`APPLE_CERT`, `AC_API_KEY`…): if absent, the step prints
   "signing skipped — secrets not set (owner provides Apple Developer creds)"
   and proceeds with an UNSIGNED artifact clearly named `-unsigned`. Never
@@ -22,8 +25,8 @@ no core work, only release engineering.
 - Wire `packaging/release.sh` as the local equivalent the workflow calls.
 - Update `packaging/lightr.rb` (brew formula) url/sha256 to read from the
   release tag pattern (still placeholder until a real tag exists; documented).
-- A `release` step MUST be a no-op-publish unless a real tag is pushed — the
-  workflow only runs on tag push, so this is structural.
+- A tag MUST be a no-op for assets/releases. Only owner manual dispatch plus
+  `G-PUBLISH` approval can reach remote upload or release creation.
 - Validate: `yaml.safe_load` parses the workflow; `bash -n` the scripts.
 
 ## W2 — Naming verification (`docs/NAMING.md`)

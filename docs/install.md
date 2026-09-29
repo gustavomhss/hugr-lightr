@@ -202,7 +202,8 @@ each tier exactly.
 | Linux aarch64 | ✅ (same code) | `ns` | 🟡 **not validated** — same code as x86_64 (validated); aarch64 CI cross-check gated |
 | Windows x86_64 | 🟡 code-complete | `wsl` (ns inside WSL2) | 🟡 **not validated** — code-complete; runbook (Windows box) gated |
 
-**Read this literally:** the **macOS Intel x86_64 `vz`** path and the **Linux
+**Read this literally:** runtime evidence below is not a public release-support
+claim. The **macOS Intel x86_64 `vz`** path and the **Linux
 x86_64 `ns`** path are both run end-to-end and proven (the latter on public
 GitHub-hosted Linux CI). Apple Silicon `vz`, Linux **aarch64** `ns`, and Windows
 `wsl` are written and compile/cross-check clean, with runbooks under `spikes/`,
@@ -224,9 +225,10 @@ and have **not** shipped a public release yet:
   (fails loudly while its placeholders are unfilled — by design).
 - **crates.io** — per-crate publish metadata is ready on all crates; the
   workspace ships `publish = false` until the owner flips the gate.
-- **GitHub Releases** — a 5-target release matrix
-  (`.github/workflows/release.yml`) is wired; macOS signing waits on owner
-  secrets, and unsigned artifacts are clearly labeled.
+- **GitHub Releases** — initial public matrix is only Linux x86_64 and macOS
+  arm64. Tags create no assets; owner manual `G-PUBLISH` approval gates remote
+  artifact upload and draft release. macOS signing waits on owner secrets, and
+  unsigned artifacts are clearly labeled.
 
 Until any of those go live, **build from source** as above. The publishing
 procedure is documented in [`docs/RELEASE.md`](RELEASE.md).

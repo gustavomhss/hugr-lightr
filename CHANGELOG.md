@@ -96,8 +96,10 @@ cross-compile-clean; runtime on foreign hardware is a one-command runbook
 - `windows-sys` target-gated (never on unix builds). `cargo check --target
   x86_64-pc-windows-gnu` (lib+bins + all-targets): **0 errors**.
 
-**Distribution + CI:** `release.yml` = 5-target matrix (macOS arm64/x86_64, Linux
-x86_64/aarch64 cross-linked, Windows x86_64 `.zip`) → SHA256SUMS + Release;
+**Distribution + CI:** CI retains broad platform coverage. Initial public release
+matrix is macOS arm64 + Linux x86_64 only; macOS x86_64, Linux aarch64, and
+Windows have no public artifact/support claim. Tags create no release/assets;
+owner manual `G-PUBLISH` approval gates remote upload.
 `ci.yml` gate on ubuntu/macos/windows + an aarch64 cross-check (installs CC +
 linker for blake3/ring C deps). macOS release signing applies the vz entitlement.
 
@@ -113,11 +115,12 @@ Three parallel tracks toward true SOTA, all code-complete + host-tested
 (runtime validation packaged/gated where it needs an ARM target).
 
 **Ship (Product A):**
-- **Release pipeline** — `.github/workflows/release.yml`: tag-triggered
-  (`v*`) matrix build (macOS arm64/x86_64, Linux x86_64) → tarballs +
-  SHA256SUMS → GitHub Release. macOS signing/notarization steps present but
-  gated behind owner secrets; unsigned artifacts clearly labeled `-unsigned`,
-  never fake-signed. Nothing publishes without a deliberate tag.
+- **Release pipeline** — `.github/workflows/release.yml`: manual owner dispatch
+  against frozen SHA + existing tag, with `G-PUBLISH` environment approval before
+  remote upload. Public tarballs are macOS arm64 (`--features vz`) and Linux
+  x86_64 only, plus checksums. macOS signing/notarization steps remain gated
+  behind owner secrets; unsigned artifacts are clearly labeled `-unsigned`,
+  never fake-signed. Tags alone create nothing.
 - **Naming resolved** (`docs/NAMING.md`): `lightr` and `hugr-lightr` both
   FREE on crates.io; no brew/CLI collision → crate `hugr-lightr`, binary
   `lightr`. (Apache-2.0 already set, ADR-0008.)
