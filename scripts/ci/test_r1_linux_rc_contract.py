@@ -63,7 +63,7 @@ EXPECTED_RUNS = {
         test "$(wc -l < "$CHECKSUM")" -eq 1
         grep -Eq '^[0-9a-f]{64}  [^[:space:]]+$' "$CHECKSUM"
         test "$(awk '{print $2}' "$CHECKSUM")" = "$ARTIFACT_NAME"
-        sha256sum -c "$CHECKSUM"
+        (cd "$(dirname "$CHECKSUM")" && sha256sum -c "$(basename "$CHECKSUM")")
         tar -tzf "$ARTIFACT" | grep -Fxq lightr
         SHA256="$(sha256sum "$ARTIFACT" | awk '{print $1}')"
         BINARY_SHA256="$(tar -xOf "$ARTIFACT" lightr | sha256sum | awk '{print $1}')"
@@ -156,7 +156,7 @@ def validate(document):
         ("Verify artifact and checksum", 'test "$(wc -l < "$CHECKSUM")" -eq 1'),
         ("Verify artifact and checksum", "grep -Eq '^[0-9a-f]{64}  [^[:space:]]+$' \"$CHECKSUM\""),
         ("Verify artifact and checksum", 'test "$(awk \'{print $2}\' "$CHECKSUM")" = "$ARTIFACT_NAME"'),
-        ("Verify artifact and checksum", 'sha256sum -c "$CHECKSUM"'),
+        ("Verify artifact and checksum", '(cd "$(dirname "$CHECKSUM")" && sha256sum -c "$(basename "$CHECKSUM")")'),
         ("Run required OCI witnesses", 'for witness in "${WITNESSES[@]}"; do'),
         ("Run required OCI witnesses", 'cargo +1.96.0 test --locked -p "$package" --lib -- "$witness" --exact |& tee "r1-receipt/${witness##*::}.log"'),
     ):
@@ -208,7 +208,7 @@ class R1LinuxRcContractTests(unittest.TestCase):
             ("Verify artifact and checksum", 'test "$(wc -l < "$CHECKSUM")" -eq 1'),
             ("Verify artifact and checksum", "grep -Eq '^[0-9a-f]{64}  [^[:space:]]+$' \"$CHECKSUM\""),
             ("Verify artifact and checksum", 'test "$(awk \'{print $2}\' "$CHECKSUM")" = "$ARTIFACT_NAME"'),
-            ("Verify artifact and checksum", 'sha256sum -c "$CHECKSUM"'),
+            ("Verify artifact and checksum", '(cd "$(dirname "$CHECKSUM")" && sha256sum -c "$(basename "$CHECKSUM")")'),
         ):
             candidate = copy.deepcopy(self.document)
             step = step_named(candidate, step_name)

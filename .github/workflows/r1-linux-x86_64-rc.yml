@@ -89,7 +89,7 @@ jobs:
           test "$(wc -l < "$CHECKSUM")" -eq 1
           grep -Eq '^[0-9a-f]{64}  [^[:space:]]+$' "$CHECKSUM"
           test "$(awk '{print $2}' "$CHECKSUM")" = "$ARTIFACT_NAME"
-          sha256sum -c "$CHECKSUM"
+          (cd "$(dirname "$CHECKSUM")" && sha256sum -c "$(basename "$CHECKSUM")")
           tar -tzf "$ARTIFACT" | grep -Fxq lightr
           SHA256="$(sha256sum "$ARTIFACT" | awk '{print $1}')"
           BINARY_SHA256="$(tar -xOf "$ARTIFACT" lightr | sha256sum | awk '{print $1}')"
