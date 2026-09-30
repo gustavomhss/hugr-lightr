@@ -73,22 +73,32 @@ jobs:
         run: |
           set -euo pipefail
           if [ -n "${{ matrix.features }}" ]; then
-            cargo build --release -p lightr-cli --target ${{ matrix.rust-target }} --features "${{ matrix.features }}"
+            cargo build --locked --release -p lightr-cli --target ${{ matrix.rust-target }} --features "${{ matrix.features }}"
           else
-            cargo build --release -p lightr-cli --target ${{ matrix.rust-target }}
+            cargo build --locked --release -p lightr-cli --target ${{ matrix.rust-target }}
           fi
 
       - name: Sign and notarize (macOS)
         if: ${{ runner.os == 'macOS' }}
+        shell: bash
         env:
           APPLE_CERT: ${{ secrets.APPLE_CERT }}
           APPLE_CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
           AC_API_KEY: ${{ secrets.AC_API_KEY }}
           AC_API_KEY_ID: ${{ secrets.AC_API_KEY_ID }}
         run: |
+          set -euo pipefail
           BINARY="target/${{ matrix.rust-target }}/release/lightr"
+          verify_binary() {
+            codesign --verify --strict "$BINARY"
+            ENTITLEMENTS_PATH="$RUNNER_TEMP/lightr-entitlements.plist"
+            codesign -d --entitlements :- "$BINARY" > "$ENTITLEMENTS_PATH"
+            python3 -c 'import plistlib, sys; value = plistlib.load(open(sys.argv[1], "rb")).get("com.apple.security.virtualization"); sys.exit(0 if value is True else "virtualization entitlement must be boolean true")' "$ENTITLEMENTS_PATH"
+          }
           if [ -z "${APPLE_CERT}" ] || [ -z "${APPLE_CERT_PASSWORD}" ] || [ -z "${AC_API_KEY}" ] || [ -z "${AC_API_KEY_ID}" ]; then
-            echo "signing skipped — Apple signing credentials incomplete; publishing explicitly unsigned artifact"
+            codesign -s - --force --entitlements packaging/vz.entitlements "$BINARY"
+            verify_binary
+            echo "unsigned (ad-hoc virtualization entitlement; no Developer ID; not notarized) — Apple signing credentials incomplete"
             echo "SIGNING_DONE=false" >> "$GITHUB_ENV"
             exit 0
           fi
@@ -104,6 +114,7 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
           codesign --sign "Developer ID Application" --options runtime --timestamp \
             --entitlements packaging/vz.entitlements --verbose "$BINARY"
+          verify_binary
           AC_KEY_PATH="$RUNNER_TEMP/ac_api_key.json"
           printf '%s' "$AC_API_KEY" > "$AC_KEY_PATH"
           DMG_PATH="$RUNNER_TEMP/lightr-notarize.dmg"
