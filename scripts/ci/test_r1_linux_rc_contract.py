@@ -5,11 +5,11 @@ import unittest
 from pathlib import Path
 
 import yaml
+import test_packaged_s5 as packaged_s5
 
 
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW = ROOT / ".github/workflows/r1-linux-x86_64-rc.yml"
-RELEASE_SCRIPT = ROOT / "packaging/release.sh"
 WITNESSES = {
     "oci::tests::integrity_tests::test_write_through_symlink_component_rejects_import_without_ref",
     "store::image_ref::tests::concurrent_tuple_reads_never_observe_mixed_publication",
@@ -187,7 +187,13 @@ class R1LinuxRcContractTests(unittest.TestCase):
 
     def test_clean_workflow_meets_r1_contract(self):
         validate(self.document)
-        self.assertIn("cargo build --locked --release -p lightr-cli", RELEASE_SCRIPT.read_text())
+
+    def test_linux_recipe_executes_locked_cli_build_and_valid_artifact(self):
+        # Reuse executable recipe conformance, not its shell source spelling.
+        fixture = packaged_s5.PackagedS5Tests("test_linux_recipe_has_no_vz_or_codesign")
+        fixture.setUp()
+        self.addCleanup(fixture.doCleanups)
+        fixture.test_linux_recipe_has_no_vz_or_codesign()
 
     def test_candidate_missing_mismatch_and_artifact_controls_reject(self):
         for mutate in (

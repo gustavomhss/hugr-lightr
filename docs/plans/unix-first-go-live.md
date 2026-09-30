@@ -128,7 +128,10 @@ R0 candidate freeze and artifact scope
 - Run OCI witnesses on named Apple Silicon hardware using frozen candidate.
 - In frozen candidate checkout run `cargo +1.96.0 test -p lightr-oci --lib`,
   `bash packaging/release.sh`, and
-  `bash spikes/s5-vz-boot-arm64/run-s5-arm64.sh`.
+  `bash spikes/s5-vz-boot-arm64/run-s5-arm64.sh --binary "$EXTRACTED/lightr"`.
+  Extract the checksum-verified artifact first; the selector verifies existing
+  arm64 Mach-O bytes, signature, and virtualization entitlement without rebuilding
+  or re-signing the CLI. The no-argument S5 invocation remains a development path.
 - Verify artifact filename, architecture, executable identity, checksum, and
   signing status as signed/notarized or explicitly unsigned. Bind receipt to
   frozen source SHA, binary SHA-256, `aarch64-apple-darwin`, and
@@ -138,6 +141,32 @@ R0 candidate freeze and artifact scope
   `.sha256` file. Record hardware identity, all command outputs, artifact
   SHA-256, and signing status in
   `docs/plans/unix-first-go-live/evidence/R2-macos-arm64.md`.
+
+Use supplied uncompressed arm64 `Image` and arm64 Alpine OCI inputs. From the
+frozen checkout on Apple Silicon, after the OCI test and packaging commands:
+
+```bash
+set -euo pipefail
+ARTIFACT="lightr-<version>-darwin-arm64-unsigned.tar.gz" # exact R0 filename
+(cd packaging/dist && shasum -a 256 -c "$ARTIFACT.sha256")
+EXTRACTED="$(mktemp -d)"
+tar -xzf "packaging/dist/$ARTIFACT" -C "$EXTRACTED"
+BEFORE="$(shasum -a 256 "$EXTRACTED/lightr")"
+unset LIGHTR_STORE_DIR LIGHTR_LINUX_PACK # avoid external store/pack overrides
+export LIGHTR_HOME="$(mktemp -d)" # fresh store: boot witness cannot be a memo HIT
+export LIGHTR_KERNEL=/absolute/path/to/Image
+export ALPINE_TAR=/absolute/path/to/arm64-alpine.tar
+# Alternatively: unset ALPINE_TAR; export ALPINE_OCI_DIR=/absolute/path/to/arm64-oci
+bash spikes/s5-vz-boot-arm64/run-s5-arm64.sh --binary "$EXTRACTED/lightr"
+AFTER="$(shasum -a 256 "$EXTRACTED/lightr")"
+test "$BEFORE" = "$AFTER"
+printf '%s\n' "$BEFORE" "$AFTER"
+```
+
+Retain binary hashes, kernel/OCI identities, pack-build output, and signature
+inspection in the receipt. Pack assembly still needs Rust's guest musl target;
+`--binary` skips only CLI build/signing. Local artifacts are explicitly unsigned
+(ad-hoc entitlement, no Developer ID, not notarized; see `docs/RELEASE.md`).
 
 ### Quality Standards
 

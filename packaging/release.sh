@@ -6,7 +6,7 @@
 #
 # What it does:
 #   1. Builds --release for the host target
-#   2. Strips the binary
+#   2. Strips the binary; ad-hoc signs macOS staging bytes with the vz entitlement
 #   3. Computes sha256
 #   4. Produces only Unix-first public-matrix artifacts:
 #      Linux x86_64 or macOS arm64 (macOS is explicitly -unsigned locally)
@@ -91,7 +91,7 @@ esac
 
 UNSIGNED_SUFFIX=""
 if [ "$OS_TAG" = "darwin" ]; then
-    # This local recipe does not sign or notarize. Preserve that fact in name.
+    # Ad-hoc entitlement signing is not Developer ID signing or notarization.
     UNSIGNED_SUFFIX="-unsigned"
 fi
 TARBALL_NAME="${BINARY_NAME}-${VERSION}-${OS_TAG}-${ARCH_TAG}${UNSIGNED_SUFFIX}.tar.gz"
@@ -102,7 +102,11 @@ CHECKSUM_NAME="${TARBALL_NAME}.sha256"
 # ---------------------------------------------------------------------------
 
 echo "=> Building ${BINARY_NAME} ${VERSION} (${OS_TAG}/${ARCH_TAG}) ..."
-(cd "$REPO_ROOT" && cargo build --locked --release -p lightr-cli)
+BUILD_ARGS=(build --locked --release -p lightr-cli)
+if [ "$OS_TAG" = "darwin" ]; then
+    BUILD_ARGS+=(--features vz)
+fi
+(cd "$REPO_ROOT" && cargo "${BUILD_ARGS[@]}")
 
 BUILT_BIN="$REPO_ROOT/target/release/$BINARY_NAME"
 if [ ! -f "$BUILT_BIN" ]; then
@@ -135,6 +139,13 @@ trap "rm -rf '$STAGE_DIR'" EXIT INT TERM
 
 cp "$BUILT_BIN" "$STAGE_DIR/$BINARY_NAME"
 chmod 755 "$STAGE_DIR/$BINARY_NAME"
+
+if [ "$OS_TAG" = "darwin" ]; then
+    echo "=> Ad-hoc signing with vz entitlement (unsigned: no Developer ID; not notarized) ..."
+    codesign -s - --entitlements "$REPO_ROOT/packaging/vz.entitlements" \
+        --force "$STAGE_DIR/$BINARY_NAME"
+    codesign --verify --strict "$STAGE_DIR/$BINARY_NAME"
+fi
 
 TARBALL_PATH="$DIST_DIR/$TARBALL_NAME"
 echo "=> Creating tarball: $TARBALL_PATH ..."

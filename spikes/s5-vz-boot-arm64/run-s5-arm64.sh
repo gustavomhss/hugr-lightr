@@ -6,6 +6,10 @@
 #
 # Usage:
 #   bash spikes/s5-vz-boot-arm64/run-s5-arm64.sh
+#   bash spikes/s5-vz-boot-arm64/run-s5-arm64.sh --binary /path/to/packaged/lightr
+# --binary verifies existing bytes without rebuilding or re-signing lightr.
+# Pack assembly still builds guest lightr-init. LIGHTR_KERNEL supplies an arm64
+# Image; ALPINE_TAR or ALPINE_OCI_DIR supplies an existing arm64 OCI input.
 #
 # Exits 0 only when ALL assertions pass.
 # Exits non-zero on any failure (build, codesign, assertion, or prerequisite).
@@ -51,6 +55,36 @@ print_summary() {
     fi
 }
 
+LIGHTR=""
+if [ "$#" -ne 0 ]; then
+    if [ "$#" -ne 2 ] || [ "$1" != "--binary" ] || [ -z "$2" ]; then
+        log_fail "usage: run-s5-arm64.sh [--binary PATH]"
+    fi
+    [ -f "$2" ] && [ -x "$2" ] || log_fail "--binary is not an executable file: $2"
+    LIGHTR="$(cd "$(dirname "$2")" && pwd)/$(basename "$2")"
+fi
+
+log_step "Prerequisite: native macOS arm64 host"
+if [ "$(uname -s)" != "Darwin" ] || [ "$(uname -m)" != "arm64" ]; then
+    log_fail "S5 requires native Apple Silicon macOS execution (not Intel or Rosetta)"
+fi
+log_pass
+
+if [ -n "$LIGHTR" ]; then
+    log_step "Step 1: Checking packaged binary architecture"
+    BINARY_ARCHS="$(lipo -archs "$LIGHTR")" || log_fail "cannot read --binary Mach-O architecture"
+    [ "$BINARY_ARCHS" = "arm64" ] || log_fail "--binary must be arm64 Mach-O; got: $BINARY_ARCHS"
+    log_pass
+
+    log_step "Step 2: Verifying existing signature + vz entitlement"
+    codesign --verify --strict "$LIGHTR" 2>&1 || log_fail "--binary signature verification failed"
+    ENTITLEMENTS="$(codesign -d --entitlements :- "$LIGHTR" 2>/dev/null)" \
+        || log_fail "cannot read --binary entitlements"
+    VZ_ALLOWED="$(printf '%s' "$ENTITLEMENTS" | plutil -extract 'com\.apple\.security\.virtualization' raw -expect bool -o - -)" \
+        || log_fail "--binary lacks virtualization entitlement of boolean type"
+    [ "$VZ_ALLOWED" = "true" ] || log_fail "--binary virtualization entitlement is not true"
+    log_pass
+else
 # ── Step 1: Build lightr --features vz ────────────────────────────────────────
 #
 # Founder-Mac PATH workaround: rustup installs cargo to ~/.cargo/bin, which is
@@ -71,7 +105,7 @@ if ! command -v swiftc > /dev/null 2>&1; then
 fi
 (
     cd "${REPO_ROOT}"
-    cargo build --release --features vz 2>&1
+    cargo build --locked --release -p lightr-cli --features vz 2>&1
 )
 LIGHTR="${REPO_ROOT}/target/release/lightr"
 if [ ! -x "${LIGHTR}" ]; then
@@ -105,6 +139,7 @@ codesign -s - \
     "${LIGHTR}" 2>&1 \
     || log_fail "codesign failed — check that ${VZ_ENTITLEMENTS} is a valid plist entitlements file"
 log_pass
+fi
 
 # ── Step 3: Build the linux pack, THEN install it ─────────────────────────────
 #
@@ -167,7 +202,6 @@ log_pass
 #       lightr oci import /tmp/alpine-oci-arm64 --name alpine
 #
 ALPINE_REF="alpine"
-ALPINE_OCI_DIR="/tmp/s5-alpine-oci-arm64"
 
 log_step "Step 4: Importing arm64 Alpine OCI image as ref '${ALPINE_REF}'"
 if [ -n "${ALPINE_TAR:-}" ]; then
@@ -176,8 +210,12 @@ if [ -n "${ALPINE_TAR:-}" ]; then
         log_fail "ALPINE_TAR=${ALPINE_TAR} is set but file does not exist"
     fi
     "${LIGHTR}" oci import "${ALPINE_TAR}" --name "${ALPINE_REF}" 2>&1
+elif [ -n "${ALPINE_OCI_DIR:-}" ]; then
+    [ -d "${ALPINE_OCI_DIR}" ] || log_fail "ALPINE_OCI_DIR=${ALPINE_OCI_DIR} does not exist"
+    "${LIGHTR}" oci import "${ALPINE_OCI_DIR}" --name "${ALPINE_REF}" 2>&1
 elif command -v skopeo > /dev/null 2>&1; then
     # skopeo: copy from registry as arm64/linux to local OCI layout, then import.
+    ALPINE_OCI_DIR="/tmp/s5-alpine-oci-arm64"
     rm -rf "${ALPINE_OCI_DIR}"
     skopeo copy \
         --override-arch arm64 \

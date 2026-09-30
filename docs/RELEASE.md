@@ -36,6 +36,12 @@ repository secrets: `APPLE_CERT`, `APPLE_CERT_PASSWORD`, `AC_API_KEY`, and
 `lightr-<version>-darwin-arm64-unsigned.tar.gz`; release notes and receipts must
 state `unsigned`. Never describe unsigned artifact as signed or notarized.
 
+The local `packaging/release.sh` recipe builds macOS `lightr-cli --features vz`,
+then ad-hoc signs the stripped staging binary with `packaging/vz.entitlements`.
+This permits local VZ execution without an Apple account; it is not Developer ID
+signing or notarization. Its artifact keeps `-unsigned`; receipts must record
+`unsigned (ad-hoc virtualization entitlement; no Developer ID; not notarized)`.
+
 ## Crates.io Order
 
 Before G-PUBLISH, recheck registry names. Publish every workspace crate that
