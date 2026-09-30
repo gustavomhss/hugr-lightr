@@ -16,6 +16,8 @@ jobs:
     name: Verify Linux x86_64 candidate
     runs-on: ubuntu-24.04
     timeout-minutes: 90
+    outputs:
+      artifact-id: ${{ steps.upload.outputs.artifact-id }}
     env:
       CANDIDATE_SHA: ${{ inputs.candidate_sha }}
       WORKFLOW_SHA: ${{ github.sha }}
@@ -50,6 +52,15 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p r1-receipt
+          : > r1-receipt/commands.jsonl
+          : > r1-receipt/witnesses.jsonl
+          jq -n --arg net "$LIGHTR_NET_TESTS" --arg rustflags "$RUSTFLAGS" '{LIGHTR_NET_TESTS: $net, RUSTFLAGS: $rustflags}' > r1-receipt/env.json
+          cargo() {
+            local rc=0
+            command cargo "$@" || rc=$?
+            jq -nc --argjson rc "$rc" --args '{argv: (["cargo"] + $ARGS.positional), exit_code: $rc}' -- "$@" >> r1-receipt/commands.jsonl
+            return "$rc"
+          }
           cargo +1.96.0 test --locked -p lightr-oci --lib |& tee r1-receipt/oci-full.log
           declare -a WITNESSES=(
             'oci::tests::integrity_tests::test_write_through_symlink_component_rejects_import_without_ref'
@@ -58,12 +69,20 @@ jobs:
             'oci::load::load_tests::save_load_roundtrip_lossless'
             'oci::tests::pull_tests::test_pull_alpine_network_gated'
             'oci::tests::import_tests::test_path_escape_rejects_import_without_ref'
+            'oci::layer::unix::tests::cleanup_removes_owned_stage_before_drop'
+            'oci::layer::unix::tests::cleanup_rejects_replaced_stage_and_preserves_both_trees'
           )
           for witness in "${WITNESSES[@]}"; do
             package=lightr-oci
             if [[ "$witness" = store::* ]]; then package=lightr-store; fi
             cargo +1.96.0 test --locked -p "$package" --lib -- "$witness" --exact |& tee "r1-receipt/${witness##*::}.log"
-            grep -Eq '^test result: ok\. 1 passed; 0 failed; 0 ignored; [0-9]+ measured; [0-9]+ filtered out' "r1-receipt/${witness##*::}.log"
+            log="r1-receipt/${witness##*::}.log"
+            test "$(grep -Ec '^test result:' "$log")" -eq 1
+            grep -Eq '^test result: ok\. 1 passed; 0 failed; 0 ignored; 0 measured; [0-9]+ filtered out; finished in .+$' "$log"
+            grep -Fxq "test $witness ... ok" "$log"
+            negative=false
+            if [[ "$witness" = *reject* ]]; then negative=true; fi
+            jq -nc --arg name "$witness" --arg package "$package" --arg log "$log" --argjson negative "$negative" '{name: $name, package: $package, outcome: "passed", log: $log, negative_control: $negative}' >> r1-receipt/witnesses.jsonl
           done
         env:
           LIGHTR_NET_TESTS: "1"
@@ -75,6 +94,7 @@ jobs:
           test "$(uname -s)" = Linux
           test "$(uname -m)" = x86_64
           bash packaging/release.sh |& tee r1-receipt/package.log
+          jq -nc '{argv: ["bash", "packaging/release.sh"], exit_code: 0}' >> r1-receipt/commands.jsonl
 
       - name: Verify artifact and checksum
         shell: bash
@@ -90,6 +110,7 @@ jobs:
           grep -Eq '^[0-9a-f]{64}  [^[:space:]]+$' "$CHECKSUM"
           test "$(awk '{print $2}' "$CHECKSUM")" = "$ARTIFACT_NAME"
           (cd "$(dirname "$CHECKSUM")" && sha256sum -c "$(basename "$CHECKSUM")")
+          jq -nc --arg cwd "$(dirname "$CHECKSUM")" --arg checksum "$(basename "$CHECKSUM")" '{argv: ["sha256sum", "-c", $checksum], cwd: $cwd, exit_code: 0}' >> r1-receipt/commands.jsonl
           tar -tzf "$ARTIFACT" | grep -Fxq lightr
           SHA256="$(sha256sum "$ARTIFACT" | awk '{print $1}')"
           BINARY_SHA256="$(tar -xOf "$ARTIFACT" lightr | sha256sum | awk '{print $1}')"
@@ -102,13 +123,14 @@ jobs:
             --arg binary_sha256 "$BINARY_SHA256" \
             --arg environment "$(uname -srm)" \
             --arg rustc "$(rustc +1.96.0 --version)" \
-            --argjson commands '["cargo +1.96.0 test --locked -p lightr-oci --lib","cargo +1.96.0 test --locked -p <witness-package> --lib -- <witness> --exact","bash packaging/release.sh","sha256sum -c <checksum>"]' \
-            --argjson witnesses '["oci-confinement","oci-publication","oci-import","oci-load","oci-pull","oci-no-ref-negative"]' \
-            --arg negative_control "test_path_escape_rejects_import_without_ref: passed; see test log" \
-            '{candidate_sha: $candidate_sha, workflow_sha: $workflow_sha, artifact: $artifact, checksum: $checksum, sha256: $sha256, binary_sha256: $binary_sha256, environment: $environment, rustc: $rustc, commands: $commands, witnesses: $witnesses, negative_control: $negative_control}' \
+            --slurpfile execution_env r1-receipt/env.json \
+            --slurpfile commands r1-receipt/commands.jsonl \
+            --slurpfile witnesses r1-receipt/witnesses.jsonl \
+            '{candidate_sha: $candidate_sha, workflow_sha: $workflow_sha, artifact: $artifact, checksum: $checksum, sha256: $sha256, binary_sha256: $binary_sha256, environment: $environment, rustc: $rustc, env: $execution_env[0], commands: $commands, witnesses: $witnesses, negative_controls: [$witnesses[] | select(.negative_control)]}' \
             > r1-receipt/R1-linux-x86_64.json
 
       - name: Upload R1 receipt
+        id: upload
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: r1-linux-x86_64-${{ inputs.candidate_sha }}
@@ -116,5 +138,79 @@ jobs:
             packaging/dist/*.tar.gz
             packaging/dist/*.sha256
             r1-receipt/
+          if-no-files-found: error
+          retention-days: 30
+
+  clean-install:
+    name: R3 Linux x86_64 clean install
+    needs: verify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      actions: read
+    env:
+      CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+      WORKFLOW_SHA: ${{ github.sha }}
+      ARTIFACT_ID: ${{ needs.verify.outputs.artifact-id }}
+      ARTIFACT_SOURCE: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts/${{ needs.verify.outputs.artifact-id }}
+    steps:
+      - name: Download immutable R1 artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          artifact-ids: ${{ needs.verify.outputs.artifact-id }}
+          merge-multiple: true
+          path: r1
+      - name: Verify install smoke and cleanup
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -s)" = Linux
+          test "$(uname -m)" = x86_64
+          test -n "$ARTIFACT_ID"
+          RECEIPT="$PWD/r3-receipt"
+          mkdir -p "$RECEIPT"
+          jq -e --arg sha "$CANDIDATE_SHA" --arg workflow "$WORKFLOW_SHA" '.candidate_sha == $sha and .workflow_sha == $workflow and $sha == $workflow' r1/r1-receipt/R1-linux-x86_64.json
+          ARTIFACT="$(jq -er '.artifact' r1/r1-receipt/R1-linux-x86_64.json)"
+          [[ "$ARTIFACT" =~ ^packaging/dist/lightr-[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?-linux-x86_64\.tar\.gz$ ]]
+          SHA256="$(jq -er '.sha256' r1/r1-receipt/R1-linux-x86_64.json)"
+          BINARY_SHA256="$(jq -er '.binary_sha256' r1/r1-receipt/R1-linux-x86_64.json)"
+          cd r1/packaging/dist
+          ARTIFACT="$(basename "$ARTIFACT")"
+          test "$(cat "$ARTIFACT.sha256")" = "$SHA256  $ARTIFACT"
+          test "$(wc -l < "$ARTIFACT.sha256")" -eq 1
+          run() {
+            local rc=0
+            "$@" > "$RECEIPT/last-output" 2>&1 || rc=$?
+            cat "$RECEIPT/last-output"
+            jq -nc --arg cwd "$PWD" --arg output "$(cat "$RECEIPT/last-output")" --argjson rc "$rc" --args '{argv: $ARGS.positional, cwd: $cwd, exit_code: $rc, output: $output}' -- "$@" >> "$RECEIPT/commands.jsonl"
+            return "$rc"
+          }
+          run sha256sum -c "$ARTIFACT.sha256"
+          test "$(tar -tzf "$ARTIFACT")" = lightr
+          test "$(tar -xOf "$ARTIFACT" lightr | sha256sum | cut -d ' ' -f 1)" = "$BINARY_SHA256"
+          HOME="$(mktemp -d)"
+          export HOME
+          trap 'rm -rf "$HOME"' EXIT
+          test ! -e "$HOME/.local/bin/lightr"
+          mkdir -p "$HOME/.local/bin" "$HOME/extract"
+          cd "$HOME/extract"
+          run tar -xzf "$OLDPWD/$ARTIFACT"
+          test -f lightr && test ! -L lightr
+          run install -m 755 lightr "$HOME/.local/bin/lightr"
+          test "$(sha256sum "$HOME/.local/bin/lightr" | cut -d ' ' -f 1)" = "$BINARY_SHA256"
+          run "$HOME/.local/bin/lightr" --version
+          test -s "$RECEIPT/last-output"
+          run "$HOME/.local/bin/lightr" --help
+          test -s "$RECEIPT/last-output"
+          cd "$RECEIPT"
+          run rm -rf "$HOME"
+          test ! -e "$HOME"
+          trap - EXIT
+          jq -n --arg candidate_sha "$CANDIDATE_SHA" --arg workflow_sha "$WORKFLOW_SHA" --arg source "$ARTIFACT_SOURCE" --arg artifact "$ARTIFACT" --arg sha256 "$SHA256" --arg binary_sha256 "$BINARY_SHA256" --arg environment "$(uname -srm)" --slurpfile commands commands.jsonl '{candidate_sha: $candidate_sha, workflow_sha: $workflow_sha, source: $source, artifact: $artifact, sha256: $sha256, binary_sha256: $binary_sha256, environment: $environment, commands: $commands, cleanup: "removed fresh HOME"}' > R3-linux-x86_64.json
+      - name: Retain R3 Linux receipt
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: r3-linux-x86_64-${{ inputs.candidate_sha }}
+          path: r3-receipt/
           if-no-files-found: error
           retention-days: 30

@@ -1,11 +1,13 @@
 """Fail-closed contract and mutation teeth for R1 Linux RC workflow."""
 import copy
+import json
 import textwrap
 import unittest
 from pathlib import Path
 
 import yaml
 import test_packaged_s5 as packaged_s5
+from test_r1_r3_execution import probe_witnesses, probe_install, DOWNLOAD
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -17,6 +19,8 @@ WITNESSES = {
     "oci::load::load_tests::save_load_roundtrip_lossless",
     "oci::tests::pull_tests::test_pull_alpine_network_gated",
     "oci::tests::import_tests::test_path_escape_rejects_import_without_ref",
+    "oci::layer::unix::tests::cleanup_removes_owned_stage_before_drop",
+    "oci::layer::unix::tests::cleanup_rejects_replaced_stage_and_preserves_both_trees",
 }
 FORBIDDEN = ("softprops/action-gh-release@", "gh release", "cargo publish", "git tag", "git push")
 CHECKOUT = "actions/checkout@11d5960a326750d5838078e36cf38b85af677262"
@@ -32,55 +36,6 @@ EXPECTED_RUNS = {
         git cat-file -e "${CANDIDATE_SHA}^{commit}"
         test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
         test "$WORKFLOW_SHA" = "$CANDIDATE_SHA"
-    """,
-    "Run required OCI witnesses": """
-        set -euo pipefail
-        mkdir -p r1-receipt
-        cargo +1.96.0 test --locked -p lightr-oci --lib |& tee r1-receipt/oci-full.log
-        declare -a WITNESSES=(
-          'oci::tests::integrity_tests::test_write_through_symlink_component_rejects_import_without_ref'
-          'store::image_ref::tests::concurrent_tuple_reads_never_observe_mixed_publication'
-          'oci::tests::import_tests::test_import_layout_two_layers_whiteout_and_hydrate'
-          'oci::load::load_tests::save_load_roundtrip_lossless'
-          'oci::tests::pull_tests::test_pull_alpine_network_gated'
-          'oci::tests::import_tests::test_path_escape_rejects_import_without_ref'
-        )
-        for witness in "${WITNESSES[@]}"; do
-          package=lightr-oci
-          if [[ "$witness" = store::* ]]; then package=lightr-store; fi
-          cargo +1.96.0 test --locked -p "$package" --lib -- "$witness" --exact |& tee "r1-receipt/${witness##*::}.log"
-          grep -Eq '^test result: ok\\. 1 passed; 0 failed; 0 ignored; [0-9]+ measured; [0-9]+ filtered out' "r1-receipt/${witness##*::}.log"
-        done
-    """,
-    "Verify artifact and checksum": """
-        set -euo pipefail
-        VERSION="$(grep -A 10 '^\\[workspace\\.package\\]' Cargo.toml | grep '^version' | head -1 | sed 's/.*= *"\\(.*\\)"/\\1/')"
-        ARTIFACT="packaging/dist/lightr-${VERSION}-linux-x86_64.tar.gz"
-        CHECKSUM="${ARTIFACT}.sha256"
-        ARTIFACT_NAME="$(basename "$ARTIFACT")"
-        test -s "$ARTIFACT"
-        test -s "$CHECKSUM"
-        test "$(wc -l < "$CHECKSUM")" -eq 1
-        grep -Eq '^[0-9a-f]{64}  [^[:space:]]+$' "$CHECKSUM"
-        test "$(awk '{print $2}' "$CHECKSUM")" = "$ARTIFACT_NAME"
-        (cd "$(dirname "$CHECKSUM")" && sha256sum -c "$(basename "$CHECKSUM")")
-        tar -tzf "$ARTIFACT" | grep -Fxq lightr
-        SHA256="$(sha256sum "$ARTIFACT" | awk '{print $1}')"
-        BINARY_SHA256="$(tar -xOf "$ARTIFACT" lightr | sha256sum | awk '{print $1}')"
-        jq -n \\
-          --arg candidate_sha "$CANDIDATE_SHA" \\
-          --arg workflow_sha "$WORKFLOW_SHA" \\
-          --arg artifact "$ARTIFACT" \\
-          --arg checksum "$CHECKSUM" \\
-          --arg sha256 "$SHA256" \\
-          --arg binary_sha256 "$BINARY_SHA256" \\
-          --arg environment "$(uname -srm)" \\
-          --arg rustc "$(rustc +1.96.0 --version)" \\
-          --argjson commands '["cargo +1.96.0 test --locked -p lightr-oci --lib","cargo +1.96.0 test --locked -p <witness-package> --lib -- <witness> --exact","bash packaging/release.sh","sha256sum -c <checksum>"]' \\
-          --argjson witnesses '["oci-confinement","oci-publication","oci-import","oci-load","oci-pull","oci-no-ref-negative"]' \\
-          --arg negative_control "test_path_escape_rejects_import_without_ref: passed; see test log" \\
-          '{candidate_sha: $candidate_sha, workflow_sha: $workflow_sha, artifact: $artifact, checksum: $checksum, sha256: $sha256, binary_sha256: $binary_sha256, environment: $environment, rustc: $rustc, commands: $commands, witnesses: $witnesses, negative_control: $negative_control}' \\
-          > r1-receipt/R1-linux-x86_64.json
     """,
 }
 
@@ -100,7 +55,7 @@ def steps(document):
 
 
 def all_text(document):
-    return "\n".join(str(step.get(key, "")) for step in steps(document) for key in ("uses", "run"))
+    return json.dumps(document["jobs"])
 
 
 def step_named(document, name):
@@ -124,6 +79,16 @@ def require_exact_run(document, step_name):
 
 
 def validate(document):
+    permissions = {"verify": {"contents": "read"}, "clean-install": {"actions": "read"}}
+    jobs = document.get("jobs", {})
+    if not isinstance(jobs, dict) or set(jobs) != set(permissions):
+        raise ValueError("R1/R3 jobs must be exactly verify and clean-install")
+    if document.get("permissions") != permissions["verify"] or any(not isinstance(job, dict) or "uses" in job or "if" in job or job.get("continue-on-error") or job.get("permissions", document["permissions"]) != permissions[name] for name, job in jobs.items()):
+        raise ValueError("R1/R3 permissions, job skip/tolerance, or reusable-job surface changed")
+    for name, job in jobs.items():
+        required = job.get("steps")
+        if not isinstance(required, list) or not required or any(not isinstance(step, dict) or "if" in step or "continue-on-error" in step for step in required):
+            raise ValueError(f"R1/R3 required steps missing/empty/malformed or skip/tolerance set: {name}")
     event = trigger(document)
     if not isinstance(event, dict) or set(event) != {"workflow_dispatch"}:
         raise ValueError("R1 workflow must be manual-dispatch only")
@@ -178,6 +143,19 @@ def validate(document):
         raise ValueError("R1 action surface changed")
     if uses.count(UPLOAD) != 1:
         raise ValueError("R1 must upload exactly one receipt artifact")
+    probe_witnesses(document, WITNESSES)
+    install = document["jobs"].get("clean-install", {})
+    if job.get("outputs", {}).get("artifact-id") != "${{ steps.upload.outputs.artifact-id }}" or step_named(document, "Upload R1 receipt").get("id") != "upload":
+        raise ValueError("R1 immutable artifact output binding missing")
+    for key, value in {"CANDIDATE_SHA": "${{ inputs.candidate_sha }}", "WORKFLOW_SHA": "${{ github.sha }}", "ARTIFACT_ID": "${{ needs.verify.outputs.artifact-id }}"}.items():
+        if install.get("env", {}).get(key) != value:
+            raise ValueError(f"R3 identity binding missing: {key}")
+    if install.get("needs") != "verify" or install.get("runs-on") != "ubuntu-24.04" or "if" in install:
+        raise ValueError("R3 requires successful R1 on fresh Ubuntu runner")
+    download, smoke, upload = install.get("steps", [None] * 3)
+    if download.get("uses") != DOWNLOAD or download.get("with", {}).get("artifact-ids") != "${{ needs.verify.outputs.artifact-id }}" or upload.get("uses") != UPLOAD or "uses" in smoke or upload.get("with", {}).get("path") != "r3-receipt/" or upload.get("with", {}).get("if-no-files-found") != "error":
+        raise ValueError("R3 requires immutable R1 download and full r3-receipt/ upload with if-no-files-found: error")
+    probe_install(document)
 
 
 class R1LinuxRcContractTests(unittest.TestCase):
@@ -187,6 +165,14 @@ class R1LinuxRcContractTests(unittest.TestCase):
 
     def test_clean_workflow_meets_r1_contract(self):
         validate(self.document)
+
+    def test_all_required_steps_reject_skip_and_tolerance(self):
+        for job_name, job in self.document["jobs"].items():
+            for index, step in enumerate(job["steps"]):
+                for key, value in (("if", False), ("if", True), ("continue-on-error", False), ("continue-on-error", True)):
+                    candidate = copy.deepcopy(self.document)
+                    candidate["jobs"][job_name]["steps"][index][key] = value
+                    with self.subTest(job=job_name, step=step["name"], key=key, value=value), self.assertRaisesRegex(ValueError, "required steps"): validate(candidate)
 
     def test_linux_recipe_executes_locked_cli_build_and_valid_artifact(self):
         # Reuse executable recipe conformance, not its shell source spelling.
@@ -289,6 +275,33 @@ class R1LinuxRcContractTests(unittest.TestCase):
         step_named(candidate, "Verify immutable candidate identity")["uses"] = TOOLCHAIN
         with self.assertRaises(ValueError):
             validate(candidate)
+
+    def test_r1_r3_binding_skip_network_and_publication_mutations_reject(self):
+        for key in ("needs", "env", "permissions"):
+            candidate = copy.deepcopy(self.document)
+            candidate["jobs"]["clean-install"].pop(key)
+            with self.subTest(key=key), self.assertRaises(ValueError): validate(candidate)
+        for scope, key in ((scope, key) for scope in ("step", "verify", "clean-install") for key in ("if", "continue-on-error")):
+            candidate = copy.deepcopy(self.document)
+            (candidate["jobs"]["clean-install"]["steps"][1] if scope == "step" else candidate["jobs"][scope])[key] = False if scope != "step" and key == "if" else True
+            with self.subTest(scope=scope, key=key), self.assertRaises(ValueError): validate(candidate)
+        candidate = copy.deepcopy(self.document)
+        step = step_named(candidate, "Run required OCI witnesses")
+        step["run"] = step["run"].replace('command cargo "$@"', 'unset LIGHTR_NET_TESTS\ncommand cargo "$@"')
+        with self.assertRaises(ValueError): validate(candidate)
+        for scope, patch in ((None, {"permissions": {"contents": "write"}}),
+                             ("verify", {"permissions": {"contents": "write"}}),
+                             ("clean-install", {"permissions": "write-all"}),
+                             ("jobs", {"publish": {"permissions": {"contents": "write"}, "steps": [{"run": "gh release create forbidden"}]}}),
+                             ("upload", {"with": {"if-no-files-found": "error"}}),
+                             ("upload", {"with": {"path": "r3-receipt/last-output", "if-no-files-found": "error"}}),
+                             ("upload", {"with": {"path": "r3-receipt/"}}),
+                             ("upload", {"with": {"path": "r3-receipt/", "if-no-files-found": "warn"}}),
+                             ("clean-install", {"env": {"PUBLISH": "gh release create forbidden"}})):
+            candidate = copy.deepcopy(self.document)
+            target = candidate if scope is None else candidate["jobs"] if scope == "jobs" else candidate["jobs"]["clean-install"]["steps"][-1] if scope == "upload" else candidate["jobs"][scope]
+            target.update(patch)
+            with self.subTest(scope=scope, patch=patch), self.assertRaises(ValueError): validate(candidate)
 
 
 if __name__ == "__main__":
