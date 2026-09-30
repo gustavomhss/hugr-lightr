@@ -617,7 +617,7 @@ jobs:
 
       - name: Create git tag
         run: |
-          VERSION=$(cargo metadata --format-version=1 | jq -r '.packages[] | select(.name=="lightr-cli") | .version')
+          VERSION=$(cargo metadata --format-version=1 | jq -r '.packages[] | select(any(.targets[]; .name == "lightr" and (.kind | index("bin")))) | .version')
           git tag "v$VERSION"
           git push origin "v$VERSION"
 

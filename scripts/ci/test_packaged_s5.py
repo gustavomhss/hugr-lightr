@@ -124,7 +124,7 @@ class PackagedS5Tests(unittest.TestCase):
     def test_macos_recipe_packages_stripped_entitled_vz_bytes(self):
         result = self.run_script(RELEASE)
         self.successful(result)
-        self.assertEqual(self.named("cargo")[0][2], ["build", "--locked", "--release", "-p", "lightr-cli", "--features", "vz"])
+        self.assertEqual(self.named("cargo")[0][2], ["build", "--locked", "--release", "--bin", "lightr", "--features", "vz"])
         signed = self.named("codesign")
         self.assertEqual(signed[0][2][:4], ["-s", "-", "--entitlements", str(self.root / "packaging/vz.entitlements")])
         self.assertEqual(signed[1][2], ["--verify", "--strict", signed[0][2][-1]])
@@ -147,7 +147,7 @@ class PackagedS5Tests(unittest.TestCase):
 
     def test_linux_recipe_has_no_vz_or_codesign(self):
         self.successful(self.run_script(RELEASE, HOST_OS="Linux", HOST_ARCH="x86_64"))
-        self.assertEqual(self.named("cargo")[0][2], ["build", "--locked", "--release", "-p", "lightr-cli"])
+        self.assertEqual(self.named("cargo")[0][2], ["build", "--locked", "--release", "--bin", "lightr"])
         self.assertEqual(self.named("codesign"), [])
         self.assert_artifact("linux-x86_64", PAYLOAD + b"stripped\n")
 
@@ -175,7 +175,7 @@ class PackagedS5Tests(unittest.TestCase):
 
     def test_legacy_invocation_builds_and_signs(self):
         self.successful(self.run_script(HARNESS, S5="1"))
-        self.assertEqual(self.named("cargo")[0][2], ["build", "--locked", "--release", "-p", "lightr-cli", "--features", "vz"])
+        self.assertEqual(self.named("cargo")[0][2], ["build", "--locked", "--release", "--bin", "lightr", "--features", "vz"])
         self.assertIn("-s", self.named("codesign")[0][2])
         self.assertTrue(all(call[1] == str(self.root / "target/release/lightr") for call in self.named("lightr")))
 

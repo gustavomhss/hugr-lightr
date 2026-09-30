@@ -73,7 +73,7 @@ def validate_owner_gate(document):
     entries = build.get("strategy", {}).get("matrix", {}).get("include", [])
     macos = [entry for entry in entries if entry.get("os-tag") == "darwin"]
     if len(macos) != 1 or macos[0].get("features") != "vz":
-        raise ValueError("macOS artifact must build lightr-cli with vz")
+        raise ValueError("macOS artifact must build lightr bin with vz")
     if "--features \"${{ matrix.features }}\"" not in str(build):
         raise ValueError("macOS feature matrix is not used by build command")
     if "${{ inputs.release_tag }}" not in str(jobs.get("release", {})):

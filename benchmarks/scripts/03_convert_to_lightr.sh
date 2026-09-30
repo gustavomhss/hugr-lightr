@@ -14,7 +14,7 @@ if [[ ! -x "$CARGO_BIN" ]]; then
 fi
 
 cd "$ROOT"
-"$CARGO_BIN" build -p lightr-cli --release
+"$CARGO_BIN" build --bin lightr --release
 if [[ ! -x "$ROOT/target/release/lightr" ]]; then
     printf 'lightr-cli build produced no executable: %s\n' "$ROOT/target/release/lightr" >&2
     exit 1

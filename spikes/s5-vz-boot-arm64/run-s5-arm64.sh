@@ -105,7 +105,7 @@ if ! command -v swiftc > /dev/null 2>&1; then
 fi
 (
     cd "${REPO_ROOT}"
-    cargo build --locked --release -p lightr-cli --features vz 2>&1
+    cargo build --locked --release --bin lightr --features vz 2>&1
 )
 LIGHTR="${REPO_ROOT}/target/release/lightr"
 if [ ! -x "${LIGHTR}" ]; then

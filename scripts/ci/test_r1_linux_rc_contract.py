@@ -175,7 +175,7 @@ class R1LinuxRcContractTests(unittest.TestCase):
                     with self.subTest(job=job_name, step=step["name"], key=key, value=value), self.assertRaisesRegex(ValueError, "required steps"): validate(candidate)
 
     def test_linux_recipe_executes_locked_cli_build_and_valid_artifact(self):
-        # Reuse executable recipe conformance, not its shell source spelling.
+        # Reuse exact --locked --release --bin lightr argv and artifact conformance.
         fixture = packaged_s5.PackagedS5Tests("test_linux_recipe_has_no_vz_or_codesign")
         fixture.setUp()
         self.addCleanup(fixture.doCleanups)

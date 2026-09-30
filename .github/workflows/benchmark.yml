@@ -63,7 +63,7 @@ jobs:
       - name: Install pinned Docker
         run: bash benchmarks/ci/install_docker.sh
       - name: Build Lightr CLI
-        run: cargo build -p lightr-cli --release
+        run: cargo build --bin lightr --release
       - name: Build standalone runner
         run: cargo build --manifest-path benchmarks/runner/Cargo.toml --release
       - name: Run smoke chunk
@@ -114,7 +114,7 @@ jobs:
       - name: Install pinned Docker
         run: bash benchmarks/ci/install_docker.sh
       - name: Build Lightr CLI
-        run: cargo build -p lightr-cli --release
+        run: cargo build --bin lightr --release
       - name: Build standalone runner
         run: cargo build --manifest-path benchmarks/runner/Cargo.toml --release
       - name: Run evidence chunk

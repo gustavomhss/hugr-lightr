@@ -128,7 +128,7 @@ class ReleaseSigningTests(unittest.TestCase):
                                             cwd=tmp, env=dict(os.environ, PATH=f"{tmp}:{os.environ['PATH']}"),
                                             capture_output=True, timeout=15)
                     self.assertEqual(result.returncode, 0, result.stderr)
-                    expected = ["build", "--locked", "--release", "-p", "lightr-cli", "--target", entry["rust-target"]]
+                    expected = ["build", "--locked", "--release", "--bin", "lightr", "--target", entry["rust-target"]]
                     if entry["features"]:
                         expected += ["--features", entry["features"]]
                     self.assertEqual(json.loads(result.stdout), expected)

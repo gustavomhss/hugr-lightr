@@ -102,7 +102,7 @@ CHECKSUM_NAME="${TARBALL_NAME}.sha256"
 # ---------------------------------------------------------------------------
 
 echo "=> Building ${BINARY_NAME} ${VERSION} (${OS_TAG}/${ARCH_TAG}) ..."
-BUILD_ARGS=(build --locked --release -p lightr-cli)
+BUILD_ARGS=(build --locked --release --bin lightr)
 if [ "$OS_TAG" = "darwin" ]; then
     BUILD_ARGS+=(--features vz)
 fi

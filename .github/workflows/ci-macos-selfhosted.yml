@@ -65,8 +65,8 @@ jobs:
         run: |
           echo "$HOME/.rustup/toolchains/1.96.0-x86_64-apple-darwin/bin" >> "$GITHUB_PATH"
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
-      - name: cargo build -p lightr-cli --features vz (Rust + Swift shim)
-        run: cargo build -p lightr-cli --features vz
+      - name: cargo build --bin lightr --features vz (Rust + Swift shim)
+        run: cargo build --bin lightr --features vz
       - name: Ad-hoc codesign with vz entitlement
         run: |
           codesign --force --sign - --entitlements packaging/vz.entitlements target/debug/lightr

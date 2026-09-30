@@ -34,7 +34,7 @@ command -v swiftc >/dev/null 2>&1 || { echo "[S5-SWITCH] swiftc missing (vz shim
 # A linux pack + an 'alpine' rootfs ref must already be installed (this is a
 # validation harness, not a provisioning script). Build lightr to check/provision.
 echo "[S5-SWITCH] building lightr (vz) for prerequisite checks ..."
-cargo build -p lightr-cli --features vz 2>&1 | tail -3
+cargo build --bin lightr --features vz 2>&1 | tail -3
 LIGHTR="${REPO_ROOT}/target/debug/lightr"
 codesign --force --sign - --entitlements "${ENTITLEMENTS}" "${LIGHTR}" >/dev/null 2>&1 || true
 

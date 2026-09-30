@@ -69,7 +69,7 @@ log_pass
 
 # ── Step 2: build + codesign the vz CLI ───────────────────────────────────────
 log_step "Step 2: build lightr --features vz"
-cargo build -p lightr-cli --features vz >/tmp/s5net-build.log 2>&1 || log_fail "vz build failed (see /tmp/s5net-build.log)"
+cargo build --bin lightr --features vz >/tmp/s5net-build.log 2>&1 || log_fail "vz build failed (see /tmp/s5net-build.log)"
 [ -x "${BIN}" ] || log_fail "binary not at ${BIN}"
 log_pass
 

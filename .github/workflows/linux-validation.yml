@@ -43,7 +43,7 @@ jobs:
       - name: Toolchain
         run: rustup toolchain install 1.96.0 --profile minimal --no-self-update && rustup default 1.96.0
       - name: Build lightr (release) — also proves cfg(linux) ns.rs compiles
-        run: cargo build -p lightr-cli --release -j2
+        run: cargo build --bin lightr --release -j2
       - name: Prepare alpine rootfs (has busybox `ip`)
         run: |
           set -e -x
@@ -313,7 +313,7 @@ jobs:
           command -v ctr && ctr --version
           du -sb . >/dev/null  # confirm GNU du -sb is available
       - name: Build lightr (release)
-        run: cargo build --release -p lightr-cli -j2
+        run: cargo build --release --bin lightr -j2
       - name: Put release lightr on PATH
         run: echo "$PWD/target/release" >> "$GITHUB_PATH"
       - name: KPI 1 — pull dedup (0 new CAS bytes on re-pull)
@@ -343,7 +343,7 @@ jobs:
       - name: Toolchain
         run: rustup toolchain install 1.96.0 --profile minimal --no-self-update && rustup default 1.96.0
       - name: Build lightr (release)
-        run: cargo build -p lightr-cli --release -j2
+        run: cargo build --bin lightr --release -j2
       - name: Prepare alpine rootfs (busybox awk/sh)
         run: |
           set -e -x
@@ -461,7 +461,7 @@ jobs:
       - name: Toolchain
         run: rustup toolchain install 1.96.0 --profile minimal --no-self-update && rustup default 1.96.0
       - name: Build lightr (release) — also proves cfg(linux) ns.rs compiles
-        run: cargo build -p lightr-cli --release -j2
+        run: cargo build --bin lightr --release -j2
       - name: Prepare alpine rootfs
         run: |
           set -e -x
@@ -964,7 +964,7 @@ jobs:
       - name: Build lightr-cri-serve (real backend + vendored shell)
         run: cargo build --release --locked --manifest-path crates/lightr-cri-serve/Cargo.toml -j2
       - name: Build lightr (release) — snapshot controlled fixture into CRI state
-        run: cargo build -p lightr-cli --release --locked -j2
+        run: cargo build --bin lightr --release --locked -j2
       - name: Install controlled-rootfs prerequisites
         run: |
           set -euo pipefail
@@ -1582,7 +1582,7 @@ jobs:
       - name: Build lightr-cri-serve (real backend + vendored shell)
         run: cargo build --release --locked --manifest-path crates/lightr-cri-serve/Cargo.toml -j2
       - name: Build lightr (release) — for the pre-seed image fallback
-        run: cargo build -p lightr-cli --release --locked -j2
+        run: cargo build --bin lightr --release --locked -j2
       - name: Install jq (critest JSON-report parsing)
         run: |
           set -e -x

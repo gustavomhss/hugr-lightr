@@ -73,9 +73,9 @@ jobs:
         run: |
           set -euo pipefail
           if [ -n "${{ matrix.features }}" ]; then
-            cargo build --locked --release -p lightr-cli --target ${{ matrix.rust-target }} --features "${{ matrix.features }}"
+            cargo build --locked --release --bin lightr --target ${{ matrix.rust-target }} --features "${{ matrix.features }}"
           else
-            cargo build --locked --release -p lightr-cli --target ${{ matrix.rust-target }}
+            cargo build --locked --release --bin lightr --target ${{ matrix.rust-target }}
           fi
 
       - name: Sign and notarize (macOS)

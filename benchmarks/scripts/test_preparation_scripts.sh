@@ -125,7 +125,7 @@ bash "$ROOT/benchmarks/scripts/02_extract_dockerfiles.sh"
 bash "$ROOT/benchmarks/scripts/03_convert_to_lightr.sh"
 printf '[workspace]\n' > "$ROOT/benchmarks/runner/Cargo.toml"
 bash "$ROOT/benchmarks/scripts/04_build_runner.sh"
-if ! grep -Fqx -- 'build -p lightr-cli --release' "$CARGO_LOG"; then
+if ! grep -Fqx -- 'build --bin lightr --release' "$CARGO_LOG"; then
     fail 'lightr CLI build command changed'
 fi
 if ! grep -Fqx -- 'build --release' "$CARGO_LOG"; then
