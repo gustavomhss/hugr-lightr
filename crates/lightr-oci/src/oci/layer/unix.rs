@@ -404,6 +404,14 @@ mod tests {
         parts.iter().map(OsString::from).collect()
     }
 
+    // Test-only teardown, including assertion failure during mutation probes.
+    struct StageGuard(PathBuf);
+    impl Drop for StageGuard {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
     #[test]
     fn hardlink_preserves_inode_identity() {
         let mut fs = UnixLayerFs::new().unwrap();
@@ -450,6 +458,97 @@ mod tests {
         use std::os::unix::fs::MetadataExt;
         assert_eq!(stage.mode() & 0o777, 0o700);
         assert_ne!(parent.st_mode & 0o1000, 0);
+    }
+
+    #[test]
+    fn cleanup_removes_owned_stage_before_drop() {
+        let mut layer = UnixLayerFs::new().unwrap();
+        layer
+            .apply(&LayerOp::Regular {
+                dest: path(&["nested", "data"]),
+                data: b"owned".to_vec(),
+                mode: 0o600,
+            })
+            .unwrap();
+        let stage_path = layer.path().to_owned();
+        let _stage_guard = StageGuard(stage_path.clone());
+        let named =
+            fs::statat(&layer.parent, &layer.stage_name, AtFlags::SYMLINK_NOFOLLOW).unwrap();
+        assert_eq!(identity(named), identity(fs::fstat(&layer.root).unwrap()));
+        assert_eq!(
+            std::fs::read(stage_path.join("nested/data")).unwrap(),
+            b"owned"
+        );
+
+        layer.cleanup().unwrap();
+
+        // Observe removal while the owner is alive: Drop must not mask a no-op.
+        assert_eq!(
+            fs::statat(&layer.parent, &layer.stage_name, AtFlags::SYMLINK_NOFOLLOW).unwrap_err(),
+            rustix::io::Errno::NOENT
+        );
+        assert_eq!(
+            std::fs::symlink_metadata(&stage_path).unwrap_err().kind(),
+            std::io::ErrorKind::NotFound
+        );
+    }
+
+    #[test]
+    fn cleanup_rejects_replaced_stage_and_preserves_both_trees() {
+        // A deterministic same-UID swap exercises the identity boundary, not a
+        // claim of protection from the adversary excluded by ADR-0021.
+        let parked = tempfile::tempdir_in("/tmp").unwrap();
+        let mut layer = UnixLayerFs::new().unwrap();
+        layer
+            .apply(&LayerOp::Regular {
+                dest: path(&["owned"]),
+                data: b"original".to_vec(),
+                mode: 0o600,
+            })
+            .unwrap();
+        let stage_path = layer.path().to_owned();
+        let _replacement_guard = StageGuard(stage_path.clone());
+        let original_path = parked.path().join("original");
+        std::fs::rename(&stage_path, &original_path).unwrap();
+        std::fs::create_dir(&stage_path).unwrap();
+        std::fs::write(stage_path.join("sentinel"), b"replacement").unwrap();
+        let pinned = identity(fs::fstat(&layer.root).unwrap());
+        let replacement =
+            fs::statat(&layer.parent, &layer.stage_name, AtFlags::SYMLINK_NOFOLLOW).unwrap();
+        let replacement_identity = identity(replacement);
+        assert_eq!(pinned, layer.identity);
+        assert_ne!(replacement_identity, pinned);
+        assert_eq!(
+            identity(fs::fstat(File::open(&original_path).unwrap()).unwrap()),
+            pinned
+        );
+
+        let result = layer.cleanup();
+
+        // A nonempty replacement alone would also survive unlinkat failure if
+        // the identity check vanished. The pinned tree must remain intact too.
+        assert_eq!(
+            std::fs::read(original_path.join("owned")).unwrap(),
+            b"original"
+        );
+        assert!(matches!(
+            result,
+            Err(LightrError::InvalidManifest(message))
+                if message == "OCI staging name replaced before cleanup"
+        ));
+        drop(layer); // Automatic cleanup must reject the same replacement.
+        assert_eq!(
+            identity(fs::fstat(File::open(&stage_path).unwrap()).unwrap()),
+            replacement_identity
+        );
+        assert_eq!(
+            std::fs::read(stage_path.join("sentinel")).unwrap(),
+            b"replacement"
+        );
+        assert_eq!(
+            std::fs::read(original_path.join("owned")).unwrap(),
+            b"original"
+        );
     }
 
     #[test]
