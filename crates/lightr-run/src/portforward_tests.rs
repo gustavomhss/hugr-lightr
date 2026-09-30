@@ -6,7 +6,7 @@
 use super::*;
 use std::time::{Duration, Instant};
 
-// All three portforward tests use the "bind port 0 to discover a free port,
+// Portforward tests use the "bind port 0 to discover a free port,
 // drop the listener, then pass the port to the forwarder" pattern. This is
 // inherently racy when test threads run in parallel: two threads may discover
 // the same port, drop their respective listeners, and then both fail to bind.
@@ -177,17 +177,36 @@ fn range_yields_n_live_forwarders() {
     // One echo server per "container port" in the range; three host ports.
     let mut host_ports = Vec::new();
     let mut echoes = Vec::new();
+    let mut reservations = Vec::new();
     for _ in 0..3 {
         echoes.push(spawn_echo());
-        let free = TcpListener::bind("127.0.0.1:0").unwrap();
+        let free = TcpListener::bind("0.0.0.0:0").unwrap();
         host_ports.push(free.local_addr().unwrap().port());
-        drop(free);
+        // Retain every host port while later echoes and host ports are allocated.
+        reservations.push(free);
+    }
+    let distinct_ports: std::collections::HashSet<_> = host_ports.iter().chain(&echoes).collect();
+    assert_eq!(
+        distinct_ports.len(),
+        6,
+        "host and echo ports must be distinct"
+    );
+
+    // Force reuse of each selected port: the OS must reject it while reserved.
+    // Iterate port numbers so prematurely dropping reservations cannot skip this control.
+    for &host_port in &host_ports {
+        let err = TcpListener::bind(("0.0.0.0", host_port))
+            .expect_err("range host port must remain reserved until start_on");
+        assert_eq!(err.kind(), std::io::ErrorKind::AddrInUse);
     }
 
     // Mimic what the run path does with parse_publish_spec's expansion:
     // start one forwarder per (host, container) pair.
     let mut fwds = Vec::new();
-    for i in 0..3 {
+    for (i, reservation) in reservations.into_iter().enumerate() {
+        // start_on takes a port number, so an external process can still steal
+        // this port between release and bind; PORT_LOCK only protects this module.
+        drop(reservation);
         fwds.push(
             start_on("0.0.0.0", host_ports[i], "127.0.0.1", echoes[i]).expect("range forwarder"),
         );
