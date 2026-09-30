@@ -102,7 +102,7 @@ CHECKSUM_NAME="${TARBALL_NAME}.sha256"
 # ---------------------------------------------------------------------------
 
 echo "=> Building ${BINARY_NAME} ${VERSION} (${OS_TAG}/${ARCH_TAG}) ..."
-(cd "$REPO_ROOT" && cargo build --release -p lightr-cli)
+(cd "$REPO_ROOT" && cargo build --locked --release -p lightr-cli)
 
 BUILT_BIN="$REPO_ROOT/target/release/$BINARY_NAME"
 if [ ! -f "$BUILT_BIN" ]; then

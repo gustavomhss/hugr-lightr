@@ -1,0 +1,120 @@
+name: R1 Linux x86_64 release candidate
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_sha:
+        description: Immutable 40-character commit SHA frozen for R1
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify Linux x86_64 candidate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+      WORKFLOW_SHA: ${{ github.sha }}
+      RUSTFLAGS: "-D warnings"
+    steps:
+      - name: Checkout candidate
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ inputs.candidate_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify immutable candidate identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$CANDIDATE_SHA" in
+            [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]) ;;
+            *) echo "candidate_sha must be a lowercase 40-character commit SHA" >&2; exit 1 ;;
+          esac
+          git cat-file -e "${CANDIDATE_SHA}^{commit}"
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test "$WORKFLOW_SHA" = "$CANDIDATE_SHA"
+
+      - name: Install pinned Rust
+        uses: dtolnay/rust-toolchain@ebb3d1676050bfd0971c36c1e215b5751473994d
+        with:
+          targets: x86_64-unknown-linux-gnu
+
+      - name: Run required OCI witnesses
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p r1-receipt
+          cargo +1.96.0 test --locked -p lightr-oci --lib |& tee r1-receipt/oci-full.log
+          declare -a WITNESSES=(
+            'oci::tests::integrity_tests::test_write_through_symlink_component_rejects_import_without_ref'
+            'store::image_ref::tests::concurrent_tuple_reads_never_observe_mixed_publication'
+            'oci::tests::import_tests::test_import_layout_two_layers_whiteout_and_hydrate'
+            'oci::load::load_tests::save_load_roundtrip_lossless'
+            'oci::tests::pull_tests::test_pull_alpine_network_gated'
+            'oci::tests::import_tests::test_path_escape_rejects_import_without_ref'
+          )
+          for witness in "${WITNESSES[@]}"; do
+            package=lightr-oci
+            if [[ "$witness" = store::* ]]; then package=lightr-store; fi
+            cargo +1.96.0 test --locked -p "$package" --lib -- "$witness" --exact |& tee "r1-receipt/${witness##*::}.log"
+            grep -Eq '^test result: ok\. 1 passed; 0 failed; 0 ignored; [0-9]+ measured; [0-9]+ filtered out' "r1-receipt/${witness##*::}.log"
+          done
+        env:
+          LIGHTR_NET_TESTS: "1"
+
+      - name: Build locked Linux artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -s)" = Linux
+          test "$(uname -m)" = x86_64
+          bash packaging/release.sh |& tee r1-receipt/package.log
+
+      - name: Verify artifact and checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="$(grep -A 10 '^\[workspace\.package\]' Cargo.toml | grep '^version' | head -1 | sed 's/.*= *"\(.*\)"/\1/')"
+          ARTIFACT="packaging/dist/lightr-${VERSION}-linux-x86_64.tar.gz"
+          CHECKSUM="${ARTIFACT}.sha256"
+          ARTIFACT_NAME="$(basename "$ARTIFACT")"
+          test -s "$ARTIFACT"
+          test -s "$CHECKSUM"
+          test "$(wc -l < "$CHECKSUM")" -eq 1
+          grep -Eq '^[0-9a-f]{64}  [^[:space:]]+$' "$CHECKSUM"
+          test "$(awk '{print $2}' "$CHECKSUM")" = "$ARTIFACT_NAME"
+          sha256sum -c "$CHECKSUM"
+          tar -tzf "$ARTIFACT" | grep -Fxq lightr
+          SHA256="$(sha256sum "$ARTIFACT" | awk '{print $1}')"
+          BINARY_SHA256="$(tar -xOf "$ARTIFACT" lightr | sha256sum | awk '{print $1}')"
+          jq -n \
+            --arg candidate_sha "$CANDIDATE_SHA" \
+            --arg workflow_sha "$WORKFLOW_SHA" \
+            --arg artifact "$ARTIFACT" \
+            --arg checksum "$CHECKSUM" \
+            --arg sha256 "$SHA256" \
+            --arg binary_sha256 "$BINARY_SHA256" \
+            --arg environment "$(uname -srm)" \
+            --arg rustc "$(rustc +1.96.0 --version)" \
+            --argjson commands '["cargo +1.96.0 test --locked -p lightr-oci --lib","cargo +1.96.0 test --locked -p <witness-package> --lib -- <witness> --exact","bash packaging/release.sh","sha256sum -c <checksum>"]' \
+            --argjson witnesses '["oci-confinement","oci-publication","oci-import","oci-load","oci-pull","oci-no-ref-negative"]' \
+            --arg negative_control "test_path_escape_rejects_import_without_ref: passed; see test log" \
+            '{candidate_sha: $candidate_sha, workflow_sha: $workflow_sha, artifact: $artifact, checksum: $checksum, sha256: $sha256, binary_sha256: $binary_sha256, environment: $environment, rustc: $rustc, commands: $commands, witnesses: $witnesses, negative_control: $negative_control}' \
+            > r1-receipt/R1-linux-x86_64.json
+
+      - name: Upload R1 receipt
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: r1-linux-x86_64-${{ inputs.candidate_sha }}
+          path: |
+            packaging/dist/*.tar.gz
+            packaging/dist/*.sha256
+            r1-receipt/
+          if-no-files-found: error
+          retention-days: 30
