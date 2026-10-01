@@ -33,14 +33,16 @@ citations, **not an assertion that production deployment matches this commit**.
 Only `trusted-publishing` scope was exercised; read probes do not prove
 `publish-new` or `publish-update`, name clearance/reservation, exact-version
 availability, upload validation, or publication success for all eleven packages.
-RC receipts qualify frozen `47f0279` under the VZ-only policy; public producer completed, but native fresh-install qualification remains PENDING.
+RC receipts qualify frozen `47f0279` under the VZ-only policy; [actual public native qualification](R3-public-release-assets.md) now PASS on both targets under [owner acceptance](https://github.com/gmhelmold/hugr-lightr/issues/187#issuecomment-5934996357).
 [Explicit owner tag/draft choice][tag-auth] advances binary qualification before crate scopes only; crate publication/promotion remain unauthorized.
 Annotated unsigned `v0.1.1` object `ab042ab801f0bba462385c4c4fd47ac5f60c0866` peels to frozen `47f02795d0884956c4755254b5f6fc377a5938b5`.
 [Public run 36850231990](https://github.com/gmhelmold/hugr-lightr/actions/runs/36850231990), attempt 1, completed/success; API updated `2026-10-01T11:24:23Z`. Required `G-PUBLISH` reviews approved.
 [Release ID 400899741](https://api.github.com/repos/gmhelmold/hugr-lightr/releases/400899741): `draft=true`, five uploaded assets; no promotion. Use immutable release-ID API, not draft tag lookup.
-Independent `producer-verification.json` records PASS for ZIP-to-draft byte provenance, checksums and local binary/signature inspection only; native fresh installs remain PENDING. macOS is unsigned/ad-hoc, no Developer ID/notarization or Apple credentials.
+Independent producer byte-provenance/local-inspection PASS preceded native execution; macOS stays unsigned/ad-hoc, no Developer ID/notarization or Apple credentials.
 Producer bundle: `/var/folders/lt/z11pyzhj0m17vn798jkk69hh0000gn/T/opencode/lightr-public-producer-36850231990.GPdHpE` (`run.json`, `release-final.json`, `producer-verification.json`).
-Compiled source/producer workflow remain `47f0279`; independent consumer workflow SHA will be recorded separately when available. Harness preparation is not consumer success; consumer does not qualify its own source or change producer.
+Historical [consumer 36877718655](https://github.com/gmhelmold/hugr-lightr/actions/runs/36877718655) failed private-draft GET with App `contents: read`; diagnostics remain preserved. [#283](https://github.com/gmhelmold/hugr-lightr/pull/283) explicitly repaired draft visibility using `contents: write`, `actions: read`; transport still GET-only, not publication authority.
+[Consumer 36883638341](https://github.com/gmhelmold/hugr-lightr/actions/runs/36883638341), attempt 1 success, executed verifier/workflow `b0aabc450eab83ee844c29273b8203e5fd84365f` on fresh native runners; compiled source/producer remain `47f0279`. It does not qualify its own source or transfer RC OCI results.
+Draft snapshot explicitly says "Qualification draft — not published" and "VZ NOT EXECUTED / unvalidated"; native acceptance changes no VZ policy, crate rights or promotion permission.
 [Owner Publish Order](../../../RELEASE.md#owner-publish-order) still applies.
 
 [freeze]: https://github.com/gmhelmold/hugr-lightr/issues/187#issuecomment-5928998891
