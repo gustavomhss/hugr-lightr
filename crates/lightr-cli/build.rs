@@ -8,6 +8,19 @@
 use std::process::Command;
 
 fn main() {
+    if std::env::var_os("CARGO_FEATURE_VZ").is_some()
+        && std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos")
+    {
+        // Recognize only .cargo/config.toml's exact Cargo-encoded pair;
+        // this is not a general parser for alternate user rustflags.
+        let flags = std::env::var("CARGO_ENCODED_RUSTFLAGS").unwrap_or_default();
+        let args: Vec<_> = flags.split('\x1f').collect();
+        let rpath = ["-C", "link-arg=-Wl,-rpath,/usr/lib/swift"];
+        if !args.windows(2).any(|pair| pair == rpath) {
+            println!("cargo:rustc-link-arg=-Wl,-rpath,/usr/lib/swift");
+        }
+    }
+    println!("cargo:rerun-if-env-changed=CARGO_ENCODED_RUSTFLAGS");
     let sha = git_short_sha().unwrap_or_else(|| "unknown".to_string());
     let date = build_date().unwrap_or_else(|| "unknown".to_string());
 
