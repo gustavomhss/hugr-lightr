@@ -115,7 +115,7 @@ once the capability is real, and fill in the probe body documented at the top of
 each script.
 
 ```sh
-cargo build --release -p lightr-cli
+cargo build --release --bin lightr
 
 ./ci/linux-kpis/kpi1-pull-dedup.sh     # pull dedup, 0-byte re-pull
 ./ci/linux-kpis/kpi2-disk-dedup.sh     # disk dedup ratio, N similar images

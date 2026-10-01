@@ -135,7 +135,7 @@ R0 candidate freeze and artifact scope
 - Verify artifact filename, architecture, executable identity, checksum, and
   signing status as signed/notarized or explicitly unsigned. Bind receipt to
   frozen source SHA, binary SHA-256, `aarch64-apple-darwin`, and
-  `lightr-cli --features vz`; Intel execution or a binary without `vz` fails R2.
+  the `lightr` CLI built with `--features vz`; Intel execution or missing `vz` fails R2.
 - Expected candidate artifact is
   `packaging/dist/lightr-<version>-darwin-arm64[-unsigned].tar.gz` plus its
   `.sha256` file. Record hardware identity, all command outputs, artifact
@@ -189,6 +189,56 @@ inspection in the receipt. Pack assembly still needs Rust's guest musl target;
 - Receipt proves only recorded candidate and environment.
 - Expected Windows `Unsupported` is not macOS OCI evidence.
 
+### Hosted Partial Evidence: Execution Sequencing
+
+The [owner execution deferral](https://github.com/gmhelmold/hugr-lightr/issues/187#issuecomment-5918255831)
+permits hosted OCI/artifact/signature/install evidence while dedicated Apple
+Silicon VZ execution is unavailable. It changes sequencing only; [#113](https://github.com/gmhelmold/hugr-lightr/issues/113)
+and the full R2 requirements remain. [Hosted arm64 macOS runners do not support
+nested virtualization](https://docs.github.com/en/actions/reference/runners/github-hosted-runners#limitations-for-arm64-macos-runners).
+Every hosted receipt must say **VZ NOT EXECUTED; full R2 and overall R3 incomplete**.
+
+The hosted phase uses merged [#264 public unsigned entitlement repair](https://github.com/gmhelmold/hugr-lightr/pull/264)
+and [#266 manual hosted workflow](https://github.com/gmhelmold/hugr-lightr/pull/266),
+using the [#265 helper](https://github.com/gmhelmold/hugr-lightr/pull/265).
+The [owner-approved 0.1.1 preparation](https://github.com/gmhelmold/hugr-lightr/issues/187#issuecomment-5921245830)
+is complete: workspace/package/exact pins are prepared, publication remains
+disabled, and hosted artifact paths derive from the source version. Await
+the [new R0 source freeze](../RELEASE.md#r0-candidate), then rerun Linux and macOS
+receipts for that common SHA. Earlier Linux receipts do not qualify the new
+candidate. These are planned commands, not execution evidence.
+
+Set `CANDIDATE_SHA` to the reviewed R0 lowercase 40-character SHA and
+`CANDIDATE_REF` to an existing branch resolving to it. Both workflows must
+execute with source SHA = workflow SHA = that frozen SHA; advancing the branch
+causes identity verification to fail rather than qualifying different bytes.
+
+```bash
+set -euo pipefail
+: "${CANDIDATE_SHA:?Set the reviewed R0 candidate SHA}"
+: "${CANDIDATE_REF:?Set an existing branch at that SHA}"
+test "$(gh api "repos/gmhelmold/hugr-lightr/commits/$CANDIDATE_REF" --jq .sha)" = "$CANDIDATE_SHA"
+gh workflow run macos-arm64-candidate.yml --repo gmhelmold/hugr-lightr --ref "$CANDIDATE_REF" -f candidate_sha="$CANDIDATE_SHA"
+gh workflow run r1-linux-x86_64-rc.yml --repo gmhelmold/hugr-lightr --ref "$CANDIDATE_REF" -f candidate_sha="$CANDIDATE_SHA"
+```
+
+The macOS workflow uses two fresh hosted macOS arm64 VMs: one builds and inspects
+the unsigned `lightr` CLI artifact built with `--features vz`; the other installs
+those exact bytes. OCI witnesses, architecture/checksum inspection, strict signature
+verification, and Boolean-true `com.apple.security.virtualization` inspection
+prove only their recorded outcomes. They do not execute VZ or qualify the
+owner-gated public `release.yml` output by inference.
+
+After execution and review, record partial evidence in
+`docs/plans/unix-first-go-live/evidence/R2-macos-arm64-hosted.md`.
+Retain compiled source/workflow SHA, target/features, toolchain, host/runner
+identity and environment, exact argv/exit codes and outputs, signing state,
+artifact/binary/receipt SHA-256 values, run/job/attempt URLs, immutable artifact
+IDs and raw artifact links. Preserve `macos-build/receipt.json`,
+`macos-build/commands.json`, command logs and Apple-tool control results.
+This subsection supplies no receipt or claimed success; full R2 still requires
+the packaged-binary VZ witness above on suitable Apple Silicon hardware.
+
 ## R3 Clean-Machine Linux And macOS Arm64 Install, Checksum, Smoke
 
 ### Success Criteria
@@ -231,6 +281,18 @@ inspection in the receipt. Pack assembly still needs Rust's guest musl target;
 
 - A build-machine execution is not clean-machine evidence.
 - A successful install does not certify deferred features or unrelated subsystems.
+
+### Hosted macOS Partial Install Evidence
+
+The separate fresh macOS VM must download the exact build artifact by immutable
+`ARTIFACT_ID` and verify the original build receipt against `RECEIPT_SHA256`
+before checksum verification, extraction, signature/entitlement inspection,
+install, binary-hash comparison, version/help smoke, and fresh-HOME cleanup.
+After execution and review, record results in
+`docs/plans/unix-first-go-live/evidence/R3-macos-arm64.md`, retaining the identities,
+hashes and raw links above plus `macos-install/{receipt.json,commands.json}` and
+logs. Mark VZ NOT EXECUTED, full R2 and overall R3 incomplete; hosted install
+evidence does not waive the R2 predecessor or authorize publication.
 
 ## R4 Owner G-PUBLISH
 

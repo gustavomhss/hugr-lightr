@@ -8,26 +8,28 @@ environment; the rest compile on macOS with standard tooling.
 
 ## 1. Host binary (`lightr`)
 
-The `lightr` CLI and engine run on the host (macOS or Linux).
+The `lightr` CLI and engine run on the host (macOS or Linux). The owner-approved
+0.1.1 package name is `hugr-lightr`; its source stays in `crates/lightr-cli`.
+Use the stable binary selector across the package rename (see [release requirements](RELEASE.md#r0-candidate)).
 
 ```sh
-# Plain build (all engines):
-cargo build --release -p lightr-cli
+# Plain build (without vz):
+cargo build --release --bin lightr
 
 # macOS with Apple Virtualization.framework (vz engine):
-cargo build --release -p lightr-cli --features vz
+cargo build --release --bin lightr --features vz
 ```
 
 On macOS the `vz` binary needs an entitlement to use the Hypervisor framework:
 
 ```sh
 # Ad-hoc codesign (development; sufficient for local use):
-codesign --entitlements packaging/macos/lightr.entitlements \
+codesign --entitlements packaging/vz.entitlements \
          -s - target/release/lightr
 ```
 
-The entitlements file is at `packaging/macos/lightr.entitlements`. A proper
-Developer ID signature is required for distribution outside development.
+Ad-hoc signing is not Developer ID signing or notarization. Local and public
+unsigned artifacts retain `-unsigned`; see [signing policy](RELEASE.md#signing-policy).
 
 ---
 

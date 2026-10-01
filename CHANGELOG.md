@@ -1,5 +1,15 @@
 # Changelog — hugr-lightr
 
+## [Unreleased] — 0.1.1 candidate preparation (2026-09-30)
+
+- Workspace/package/exact internal pins are prepared for owner-approved 0.1.1;
+  CLI package `hugr-lightr`, binary `lightr`, source path `crates/lightr-cli`.
+  Publication remains disabled (`publish = false`) and owner-gated; a new R0
+  freeze and source-bound receipts are required. This is not a public release.
+- Live build/install/release guidance uses the stable binary selector and records
+  registry preflight limits. Hosted macOS OCI/artifact/install evidence remains
+  partial: VZ NOT EXECUTED, full R2 and overall R3 incomplete. No public release claimed.
+
 ## [Unreleased] — Go-live hardening wave (2026-06-17)
 
 Go-live readiness wave, all gate-green: **411 tests, 0 failures**, clippy `-D`

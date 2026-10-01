@@ -3,7 +3,50 @@
 **Status:** DECIDED  
 **Date:** 2026-06-11  
 **Author:** W2 naming agent (automated research)  
-**Gate:** ADR-0008 — crate name + binary name must be verified before publication.
+**Gate:** Contributor naming rule (`CLAUDE.md`) — verify names before publication.
+
+The June availability research below is historical, not a current reservation
+or publishing-rights check. Use the September preflight for candidate preparation.
+
+## 2026-09-30 Publication Preflight
+
+**Status:** Lead-reported checks at **20:15 UTC**, not publication or reservation.
+The owner approved preparing **0.1.1**, CLI package **`hugr-lightr`**, binary
+**`lightr`**; source remains `crates/lightr-cli`. See the recorded
+[owner preparation approval](https://github.com/gmhelmold/hugr-lightr/issues/187#issuecomment-5921245830).
+Workspace/package/exact pins are prepared; `publish = false`. A
+[new R0 freeze and receipts](RELEASE.md#r0-candidate) remain required.
+ADR-0001's historical directory/dependency law is unchanged.
+
+Existing library 0.1.0 versions are yanked, not replaceable: published versions
+are [immutable](https://doc.rust-lang.org/cargo/reference/publishing.html#publishing-a-new-version-of-an-existing-crate).
+Each exact 0.1.1 query below returned HTTP 404 on **2026-09-30,
+20:15:16–20:15:40 UTC**; this is point-in-time evidence.
+
+| Package | Existing 0.1.0 evidence (HTTP 200, `yanked=true`) | Exact 0.1.1 query (HTTP 404) |
+|---|---|---|
+| `lightr-core` | [metadata](https://crates.io/api/v1/crates/lightr-core/0.1.0) | [query](https://crates.io/api/v1/crates/lightr-core/0.1.1) |
+| `lightr-init` | [metadata](https://crates.io/api/v1/crates/lightr-init/0.1.0) | [query](https://crates.io/api/v1/crates/lightr-init/0.1.1) |
+| `lightr-store` | [metadata](https://crates.io/api/v1/crates/lightr-store/0.1.0) | [query](https://crates.io/api/v1/crates/lightr-store/0.1.1) |
+| `lightr-index` | [metadata](https://crates.io/api/v1/crates/lightr-index/0.1.0) | [query](https://crates.io/api/v1/crates/lightr-index/0.1.1) |
+| `lightr-oci` | [metadata](https://crates.io/api/v1/crates/lightr-oci/0.1.0) | [query](https://crates.io/api/v1/crates/lightr-oci/0.1.1) |
+| `lightr-views` | [metadata](https://crates.io/api/v1/crates/lightr-views/0.1.0) | [query](https://crates.io/api/v1/crates/lightr-views/0.1.1) |
+| `lightr-engine` | [metadata](https://crates.io/api/v1/crates/lightr-engine/0.1.0) | [query](https://crates.io/api/v1/crates/lightr-engine/0.1.1) |
+| `lightr-run` | [metadata](https://crates.io/api/v1/crates/lightr-run/0.1.0) | [query](https://crates.io/api/v1/crates/lightr-run/0.1.1) |
+| `hugr-lightr-cri-backend` | — | [query](https://crates.io/api/v1/crates/hugr-lightr-cri-backend/0.1.1) |
+| `lightr-build` | [metadata](https://crates.io/api/v1/crates/lightr-build/0.1.0) | [query](https://crates.io/api/v1/crates/lightr-build/0.1.1) |
+| `hugr-lightr` | — | [query](https://crates.io/api/v1/crates/hugr-lightr/0.1.1) |
+
+Lead-reported calibration: [serde 1.0.228](https://crates.io/api/v1/crates/serde/1.0.228)
+returned HTTP 200 at **2026-09-30T20:15:15.189512Z**; the exact
+[unique nonexistent-name control](https://crates.io/api/v1/crates/hugr-preflight-nonexistent-8f0fb21e35e6428e9b315b8fb7bd9765/0.1.1)
+returned HTTP 404 at **2026-09-30T20:15:15.595581Z**.
+Read-only revalidation on **2026-10-01, 00:07:53–00:08:02 UTC** repeated both
+controls, all listed 0.1.1 HTTP 404 responses, and all listed library 0.1.0
+HTTP 200 / `yanked=true` responses. This is registry evidence, not a release receipt.
+Public metadata identifying `gmhelmold` as a publisher does not establish current
+authenticated publishing rights. Recheck rights and exact versions before owner
+G-PUBLISH; point-in-time absence does not reserve a package name or version.
 
 ---
 

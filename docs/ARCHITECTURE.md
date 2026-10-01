@@ -8,6 +8,12 @@
 
 ## 1  Crate Graph
 
+**Implementation naming note (owner-approved 2026-09-30 preparation):** the
+graph's `lightr-cli` label denotes source directory `crates/lightr-cli`; the
+prepared 0.1.1 Cargo package is `hugr-lightr`, binary `lightr`. This changes
+package identity without changing the dependency law or source path.
+ADR-0001 remains historical; see [release requirements](RELEASE.md#r0-candidate).
+
 ```
                           ┌─────────────────┐
                           │  lightr-cli      │  binary `lightr`

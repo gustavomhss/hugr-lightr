@@ -7,9 +7,12 @@ codesign the binary with the virtualization entitlement.
 
 > **Honesty note.** Pre-built binaries, Homebrew, and crates.io are
 > **available on release** but currently **owner-gated** (`G-PUBLISH`). The
-> binary/crate names are cleared and the packaging metadata is ready, but no
-> public release has shipped yet — do not expect `brew install lightr` or
-> `cargo install lightr` to work today. The runbook the owner follows to
+> next candidate is owner-approved as 0.1.1, CLI package `hugr-lightr`, but no
+> Unix-first public release has shipped yet — do not expect `brew install lightr` or
+> `cargo install hugr-lightr --version 0.1.1 --locked` to work today. This command
+> is conditional on owner G-PUBLISH and an actual indexed 0.1.1 release; the
+> binary remains `lightr`. Registry absence is not a reservation or publishing
+> permission; see [preflight](NAMING.md#2026-09-30-publication-preflight). The runbook to
 > publish is [`docs/RELEASE.md`](RELEASE.md). Until then, **build from
 > source** (below). Likewise, only the **Intel x86_64 macOS `vz`** path is
 > runtime-validated end-to-end; the other platform engines are code-complete
@@ -37,7 +40,7 @@ From the repository root:
 
 ```sh
 # Build the release binary (all engines except vz):
-cargo build --release
+cargo build --release --bin lightr
 
 # The binary lands at:
 #   target/release/lightr
@@ -57,7 +60,7 @@ Verify:
 
 ```sh
 lightr --version
-# → lightr 0.1.0 (<git-sha>, <build-date>)
+# Expected source version: lightr 0.1.1 (<git-sha>, <build-date>)
 ```
 
 `--version` embeds the git SHA and build date so you always know exactly which
@@ -69,7 +72,7 @@ The `vz` engine — which boots a real Linux microVM via Apple's
 Virtualization.framework — is behind a Cargo feature. Build with it on:
 
 ```sh
-cargo build --release --features vz
+cargo build --release --bin lightr --features vz
 ```
 
 On macOS the `vz` binary needs the virtualization entitlement to talk to the
@@ -82,7 +85,8 @@ codesign --entitlements packaging/vz.entitlements -s - target/release/lightr
 The entitlements file is [`packaging/vz.entitlements`](../packaging/vz.entitlements);
 it grants exactly one key, `com.apple.security.virtualization`. The `-s -`
 performs an **ad-hoc** signature, which is sufficient for local development. A
-proper Developer ID signature is required only for distribution.
+Developer ID signature and notarization are separate from the explicitly
+unsigned ad-hoc artifact permitted by [release policy](RELEASE.md#signing-policy).
 
 > Without this codesign step, a `--features vz` binary will fail to start a VM
 > on macOS (the hypervisor denies the unentitled process).
