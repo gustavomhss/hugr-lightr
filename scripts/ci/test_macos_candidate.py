@@ -20,7 +20,14 @@ from unittest.mock import patch
 import macos_candidate as m
 
 ROOT = Path(__file__).resolve().parents[2]
-IDENTITY = 'set -euo pipefail\n[[ "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]]\ntest "$WORKFLOW_SHA" = "$CANDIDATE_SHA"\ntest "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"\n'
+IDENTITY = '''set -euo pipefail
+python3 -c 'import sys; sys.path.insert(0, "scripts/ci")
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from macos_candidate import Evidence
+with TemporaryDirectory() as directory:
+    Evidence(Path(directory) / "identity").host()'
+'''
 
 class Fixture:
     def __init__(self, version="0.1.0"):
@@ -28,6 +35,8 @@ class Fixture:
     def __enter__(self):
         self.tmp = tempfile.TemporaryDirectory(prefix="macos candidate ")
         self.root = Path(self.tmp.name); self.old = Path.cwd(); os.chdir(self.root)
+        helper = self.root / "scripts/ci/macos_candidate.py"; helper.parent.mkdir(parents=True)
+        helper.symlink_to(ROOT / "scripts/ci/macos_candidate.py")
         Path("Cargo.toml").write_text(f'# version = "9.9.9"\n[package]\nversion = "8.8.8"\n[workspace.package]\nversion = "{self.version}"\n')
         tools = self.root / "tools"; tools.mkdir()
         self.env = patch.dict(os.environ, PATH=f"{tools}:{os.environ['PATH']}", CANDIDATE_SHA="a" * 40, WORKFLOW_SHA="a" * 40, LIGHTR_NET_TESTS="1", RUSTFLAGS="-D warnings", GITHUB_OUTPUT=str(self.root / "output"), ARTIFACT_ID="123", ARTIFACT_SOURCE="https://fixture/123")
@@ -127,15 +136,43 @@ class Tests(unittest.TestCase):
         m.witness(valid, "named")
         for text in ("", valid * 2, valid.replace("named", "other"), valid.replace("0 ignored", "1 ignored"), valid + "\nSKIPPED"):
             with self.assertRaises(ValueError): m.witness(text, "named")
-        for sha in ("a" * 39, "A" * 40, "main", "a" * 41):
-            with Fixture(), patch.dict(os.environ, CANDIDATE_SHA=sha, WORKFLOW_SHA=sha):
-                self.assertNotEqual(subprocess.run(["bash", "-c", IDENTITY]).returncode, 0)
-                with self.assertRaises(ValueError): m.build()
         with Fixture() as f:
             f.tool(f.root / "tools", "cargo", "sys.exit(101)")
             with self.assertRaises(ValueError): m.build()
         with Fixture(), patch.dict(os.environ, LIGHTR_NET_TESTS="0"), self.assertRaises(ValueError): m.build()
         with Fixture(), patch.dict(os.environ, HEAD_SHA="b" * 40), self.assertRaises(ValueError): m.build()
+    def test_source_identity_controls(self):
+        for locale in ("C", "en_US.UTF-8"):
+            for defect, sha in ((None, "a" * 40), ("sha39", "a" * 39), ("uppercase40", "A" * 40), ("main", "main"), ("sha41", "a" * 41), ("workflow", "a" * 40), ("head", "a" * 40)):
+                with self.subTest(locale=locale, defect=defect), Fixture(), patch.dict(os.environ, LC_ALL=locale, CANDIDATE_SHA=sha, WORKFLOW_SHA=sha, HEAD_SHA=sha):
+                    if defect == "workflow": os.environ["WORKFLOW_SHA"] = "b" * 40
+                    if defect == "head": os.environ["HEAD_SHA"] = "b" * 40
+                    result = subprocess.run(["/bin/bash", "--noprofile", "--norc", "-c", IDENTITY], capture_output=True, text=True)
+                    self.assertEqual(result.returncode == 0, defect is None, result.stderr)
+                    e = m.Evidence("identity-control")
+                    if defect is None: self.assertEqual(e.host()["candidate_sha"], sha)
+                    else:
+                        diagnostic = "checkout identity" if defect == "head" else "candidate identity"
+                        self.assertIn(diagnostic, result.stderr)
+                        with self.assertRaisesRegex(ValueError, diagnostic): e.host()
+    def test_source_identity_mutations(self):
+        source = (ROOT / "scripts/ci/macos_candidate.py").read_text()
+        mutations = [('IDENTITY', None, 12),
+                     ('re.fullmatch("[0-9a-f]{40}", sha)', 'True', 8),
+                     ('sha == os.environ["WORKFLOW_SHA"]', 'True', 2),
+                     ('self.run("git", "rev-parse", "HEAD") == sha', 'True', 2)]
+        for before, after, failures in mutations:
+            with self.subTest(mutation=before):
+                if after is None: replacement = patch(__name__ + ".IDENTITY", "set -euo pipefail\ntrue\n")
+                else:
+                    self.assertEqual(source.count(before), 1)
+                    mutant = types.ModuleType("mutant")
+                    exec(compile(source.replace(before, after), "mutant", "exec"), mutant.__dict__)
+                    replacement = patch(__name__ + ".m", mutant)
+                with replacement:
+                    result = unittest.TestResult(); Tests("test_source_identity_controls").run(result)
+                self.assertEqual(result.errors, [], "unrelated identity harness error")
+                self.assertEqual(len(result.failures), failures, "identity control accepted mutation")
     def test_source_version_and_receipt_controls(self):
         snapshot = None
         for phase in ("build", "install"):

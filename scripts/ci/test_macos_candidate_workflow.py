@@ -17,7 +17,7 @@ PINS = ["actions/checkout@11d5960a326750d5838078e36cf38b85af677262",
         "dtolnay/rust-toolchain@ebb3d1676050bfd0971c36c1e215b5751473994d",
         "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
         "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093"]
-HOST_IDENTITY = IDENTITY + 'test "$(uname -s)" = Darwin\ntest "$(uname -m)" = arm64\ntest "$(sysctl -n hw.optional.arm64)" = 1\n' + "python3 -c 'import sys; assert sys.version_info >= (3, 11), \"Python >=3.11 required\"; import tomllib'\n"
+HOST_IDENTITY = IDENTITY
 GUARDS = ('set -euo pipefail\npython3 -m venv "$RUNNER_TEMP/macos-guards"\n'
           '"$RUNNER_TEMP/macos-guards/bin/python" -m pip install PyYAML==6.0.2\n'
           '"$RUNNER_TEMP/macos-guards/bin/python" scripts/ci/test_macos_candidate.py --require-apple-controls\n'
@@ -76,21 +76,24 @@ class Tests(unittest.TestCase):
                 mutations.append(lambda d, j=job, n=i: d["jobs"][j]["steps"].pop(n))
                 for key in doc["jobs"][job]["steps"][i].get("with", {}):
                     mutations.append(lambda d, j=job, n=i, k=key: d["jobs"][j]["steps"][n]["with"].pop(k))
-        for mutation in mutations:
-            changed = copy.deepcopy(doc); mutation(changed)
-            with self.assertRaises(ValueError): contract(changed)
+        for index, mutation in enumerate(mutations):
+            with self.subTest(mutation=index):
+                changed = copy.deepcopy(doc); mutation(changed)
+                with self.assertRaises(ValueError): contract(changed)
     def test_actual_source_host_guard(self):
         script = yaml.safe_load(WORKFLOW.read_text())["jobs"]["build"]["steps"][1]["run"]
-        for defect in (None, "sha", "workflow", "head", "os", "arch", "capability", "python"):
-            with self.subTest(defect=defect), Fixture() as f:
-                if defect == "sha": os.environ["CANDIDATE_SHA"] = "A" * 40
+        for locale, defect in ((locale, defect) for locale in ("C", "en_US.UTF-8") for defect in (None, "sha39", "uppercase40", "main", "sha41", "workflow", "head", "os", "arch", "capability", "python")):
+            with self.subTest(locale=locale, defect=defect), Fixture() as f:
+                os.environ["LC_ALL"] = locale
+                if defect in ("sha39", "uppercase40", "main", "sha41"):
+                    os.environ["CANDIDATE_SHA"] = os.environ["WORKFLOW_SHA"] = {"sha39": "a" * 39, "uppercase40": "A" * 40, "main": "main", "sha41": "a" * 41}[defect]
                 if defect == "workflow": os.environ["WORKFLOW_SHA"] = "b" * 40
                 if defect == "head": f.tool(f.root / "tools", "git", "print('b' * 40)")
                 if defect in ("os", "arch"): f.tool(f.root / "tools", "uname", "print('Linux' if sys.argv[1] == '-s' else 'arm64')" if defect == "os" else "print('Darwin' if sys.argv[1] == '-s' else 'x86_64')")
                 if defect == "capability": f.tool(f.root / "tools", "sysctl", "print('0')")
                 if defect == "python": f.tool(f.root / "tools", "python3", "sys.version_info=(3, 10); exec(sys.argv[2])")
-                result = subprocess.run(["bash", "-c", script], capture_output=True)
-                self.assertEqual(result.returncode == 0, defect is None)
+                result = subprocess.run(["/bin/bash", "--noprofile", "--norc", "-c", script], capture_output=True, text=True)
+                self.assertEqual(result.returncode == 0, defect is None, result.stderr)
     def test_helper_rejects_old_python(self):
         code = f"import sys; sys.path.insert(0, {str(Path(m.__file__).parent)!r}); sys.version_info=(3, 10); import macos_candidate"
         result = subprocess.run([sys.executable, "-S", "-c", code], capture_output=True, text=True)

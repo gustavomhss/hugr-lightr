@@ -30,13 +30,12 @@ jobs:
         shell: bash
         run: &identity |
           set -euo pipefail
-          [[ "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]]
-          test "$WORKFLOW_SHA" = "$CANDIDATE_SHA"
-          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
-          test "$(uname -s)" = Darwin
-          test "$(uname -m)" = arm64
-          test "$(sysctl -n hw.optional.arm64)" = 1
-          python3 -c 'import sys; assert sys.version_info >= (3, 11), "Python >=3.11 required"; import tomllib'
+          python3 -c 'import sys; sys.path.insert(0, "scripts/ci")
+          from pathlib import Path
+          from tempfile import TemporaryDirectory
+          from macos_candidate import Evidence
+          with TemporaryDirectory() as directory:
+              Evidence(Path(directory) / "identity").host()'
       - uses: dtolnay/rust-toolchain@ebb3d1676050bfd0971c36c1e215b5751473994d
         with:
           toolchain: 1.96.0
