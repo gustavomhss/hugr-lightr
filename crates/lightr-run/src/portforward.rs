@@ -116,6 +116,16 @@ pub fn start_on(
 ) -> Result<Forwarder> {
     let addr = format!("{host_ip}:{host_port}");
     let listener = TcpListener::bind(&addr).map_err(LightrError::Io)?;
+    start_with_listener(listener, host_ip, target_host, container_port)
+}
+
+fn start_with_listener(
+    listener: TcpListener,
+    host_ip: &str,
+    target_host: &str,
+    container_port: u16,
+) -> Result<Forwarder> {
+    let host_port = listener.local_addr().map_err(LightrError::Io)?.port();
 
     let stop = Arc::new(AtomicBool::new(false));
     let stop_thread = Arc::clone(&stop);

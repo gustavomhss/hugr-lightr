@@ -4,14 +4,7 @@
 //! host interface (incl. host-ip + range cases), proving the bind/forward path.
 
 use super::*;
-use std::time::{Duration, Instant};
 
-// Portforward tests use the "bind port 0 to discover a free port,
-// drop the listener, then pass the port to the forwarder" pattern. This is
-// inherently racy when test threads run in parallel: two threads may discover
-// the same port, drop their respective listeners, and then both fail to bind.
-// Serialise the tests with a process-wide lock so only one at a time goes
-// through the discover-drop-re-bind sequence.
 static PORT_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// Spawn a localhost echo server on an ephemeral port. Returns the bound
@@ -40,19 +33,8 @@ fn spawn_echo() -> u16 {
     port
 }
 
-/// Connect to `127.0.0.1:port`, retrying briefly so we don't race the
-/// listener coming up.
-fn connect_retry(port: u16) -> TcpStream {
-    let deadline = Instant::now() + Duration::from_secs(2);
-    loop {
-        match TcpStream::connect(("127.0.0.1", port)) {
-            Ok(s) => return s,
-            Err(_) if Instant::now() < deadline => {
-                std::thread::sleep(Duration::from_millis(20));
-            }
-            Err(e) => panic!("connect to 127.0.0.1:{port} failed: {e}"),
-        }
-    }
+fn connect(port: u16) -> TcpStream {
+    TcpStream::connect(("127.0.0.1", port)).expect("connect to forwarder")
 }
 
 /// One round-trip through a connected stream: write `msg`, read it back.
@@ -69,18 +51,12 @@ fn forwards_bytes_round_trip() {
     let _port_guard = PORT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let container_port = spawn_echo();
     // host_port 0 ⇒ ephemeral; read the real port back off the forwarder.
-    // We can't bind 0 and learn the port from the public API, so bind a
-    // real ephemeral port ourselves to discover a free one, drop it, then
-    // hand it to the forwarder.
-    let free = TcpListener::bind("127.0.0.1:0").unwrap();
-    let host_port = free.local_addr().unwrap().port();
-    drop(free);
-
-    let fwd = start(host_port, container_port).expect("start forwarder");
-    assert_eq!(fwd.host_port(), host_port);
+    let fwd = start(0, container_port).expect("start forwarder");
+    let host_port = fwd.host_port();
+    assert_ne!(host_port, 0);
     assert_eq!(fwd.container_port(), container_port);
 
-    let mut c = connect_retry(host_port);
+    let mut c = connect(host_port);
     round_trip(&mut c, b"hello-phase1");
 }
 
@@ -88,19 +64,16 @@ fn forwards_bytes_round_trip() {
 fn handles_a_second_connection() {
     let _port_guard = PORT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let container_port = spawn_echo();
-    let free = TcpListener::bind("127.0.0.1:0").unwrap();
-    let host_port = free.local_addr().unwrap().port();
-    drop(free);
-
-    let _fwd = start(host_port, container_port).expect("start forwarder");
+    let fwd = start(0, container_port).expect("start forwarder");
+    let host_port = fwd.host_port();
 
     // First connection.
-    let mut c1 = connect_retry(host_port);
+    let mut c1 = connect(host_port);
     round_trip(&mut c1, b"first");
 
     // Second, independent connection through the same forwarder — proves the
     // accept loop serves multiple (sequential) connections, not just one.
-    let mut c2 = connect_retry(host_port);
+    let mut c2 = connect(host_port);
     round_trip(&mut c2, b"second");
 
     // And concurrent: keep c1 open while c2 also round-trips.
@@ -112,16 +85,14 @@ fn handles_a_second_connection() {
 fn start_to_forwards_to_explicit_target() {
     let _port_guard = PORT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let echo_port = spawn_echo();
-    let free = TcpListener::bind("127.0.0.1:0").unwrap();
-    let host_port = free.local_addr().unwrap().port();
-    drop(free);
 
     // Using 127.0.0.1 as the explicit target keeps the test hermetic — it
     // proves the new param is plumbed without needing a real VM.
-    let fwd = start_to(host_port, "127.0.0.1", echo_port).expect("start_to forwarder");
+    let fwd = start_to(0, "127.0.0.1", echo_port).expect("start_to forwarder");
+    let host_port = fwd.host_port();
     assert_eq!(fwd.target_host(), "127.0.0.1");
 
-    let mut c = connect_retry(host_port);
+    let mut c = connect(host_port);
     round_trip(&mut c, b"explicit-target");
 }
 
@@ -134,16 +105,12 @@ fn start_to_forwards_to_explicit_target() {
 fn start_on_binds_explicit_host_ip_127() {
     let _port_guard = PORT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let echo_port = spawn_echo();
-    let free = TcpListener::bind("127.0.0.1:0").unwrap();
-    let host_port = free.local_addr().unwrap().port();
-    drop(free);
 
-    let fwd = start_on("127.0.0.1", host_port, "127.0.0.1", echo_port)
-        .expect("start_on 127.0.0.1 forwarder");
+    let fwd = start_on("127.0.0.1", 0, "127.0.0.1", echo_port).expect("start_on loopback");
     assert_eq!(fwd.host_ip(), "127.0.0.1");
-    assert_eq!(fwd.host_port(), host_port);
+    let host_port = fwd.host_port();
 
-    let mut c = connect_retry(host_port);
+    let mut c = connect(host_port);
     round_trip(&mut c, b"host-ip-loopback");
 }
 
@@ -154,15 +121,11 @@ fn start_on_binds_explicit_host_ip_127() {
 fn start_on_binds_all_interfaces_default() {
     let _port_guard = PORT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let echo_port = spawn_echo();
-    let free = TcpListener::bind("127.0.0.1:0").unwrap();
-    let host_port = free.local_addr().unwrap().port();
-    drop(free);
 
     {
-        let fwd = start_on("0.0.0.0", host_port, "127.0.0.1", echo_port)
-            .expect("start_on 0.0.0.0 forwarder");
+        let fwd = start_on("0.0.0.0", 0, "127.0.0.1", echo_port).expect("start_on wildcard");
         assert_eq!(fwd.host_ip(), "0.0.0.0");
-        let mut c = connect_retry(host_port);
+        let mut c = connect(fwd.host_port());
         round_trip(&mut c, b"all-ifaces");
         // fwd dropped here ⇒ exercises the 0.0.0.0 Drop-poke path (no hang).
     }
@@ -200,22 +163,23 @@ fn range_yields_n_live_forwarders() {
         assert_eq!(err.kind(), std::io::ErrorKind::AddrInUse);
     }
 
-    // Mimic what the run path does with parse_publish_spec's expansion:
-    // start one forwarder per (host, container) pair.
+    // Transfer each reservation directly into its forwarder; never release/rebind.
     let mut fwds = Vec::new();
     for (i, reservation) in reservations.into_iter().enumerate() {
-        // start_on takes a port number, so an external process can still steal
-        // this port between release and bind; PORT_LOCK only protects this module.
-        drop(reservation);
         fwds.push(
-            start_on("0.0.0.0", host_ports[i], "127.0.0.1", echoes[i]).expect("range forwarder"),
+            start_with_listener(reservation, "0.0.0.0", "127.0.0.1", echoes[i])
+                .expect("range forwarder"),
         );
+        assert!(matches!(
+            start_on("0.0.0.0", host_ports[i], "127.0.0.1", echoes[i]),
+            Err(LightrError::Io(e)) if e.kind() == std::io::ErrorKind::AddrInUse
+        ));
     }
     assert_eq!(fwds.len(), 3, "a 3-wide range must yield 3 forwarders");
 
     // Every host port in the range round-trips through to its own echo server.
     for (i, &hp) in host_ports.iter().enumerate() {
-        let mut c = connect_retry(hp);
+        let mut c = connect(hp);
         round_trip(&mut c, format!("range-{i}").as_bytes());
     }
 }
