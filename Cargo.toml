@@ -28,10 +28,10 @@ license = "Apache-2.0"
 repository = "https://github.com/HumanGuardrail/hugr-lightr"
 homepage = "https://github.com/HumanGuardrail/hugr-lightr"
 readme = "README.md"
-# publish stays false: ADR-0008 lifted the LICENSE gate (Apache-2.0), but
-# pushing to crates.io is a separate GTM decision (whitepaper §9.8: launch
-# after Runners M1). Flip to true when that timing call is made.
-publish = false
+# Apache-2.0 license gate is resolved (ADR-0008). Owner approved 0.1.1
+# publication preparation (#187, comment 5928309446); actual publishing
+# still requires final candidate qualification and explicit owner authorization.
+publish = true
 
 [workspace.dependencies]
 blake3 = { version = "1", features = ["rayon", "mmap"] }
