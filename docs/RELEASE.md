@@ -2,8 +2,8 @@
 
 This procedure authorizes nothing. R0-R3 receipts for one frozen candidate and
 explicit human-owner `G-PUBLISH` are required before publication or secret use.
-`Cargo.toml` remains `publish = false` during R0. A tag alone creates no asset
-or release.
+The recorded candidate remains `publish = false`. Intended crate publication
+must be prepared before the final R0 freeze. A tag alone creates no asset or release.
 
 ## Frozen Public Matrix
 
@@ -24,8 +24,9 @@ Approval is recorded in the 2026-09-30
 [#187 owner comment](https://github.com/gmhelmold/hugr-lightr/issues/187#issuecomment-5921245830).
 [Source preparation](https://github.com/gmhelmold/hugr-lightr/pull/272) includes
 root workspace path dependencies pinned to `version = "=0.1.1"`; publication
-remains disabled (`publish = false`). Workspace/package/pins are prepared,
-not qualified or published. See [registry preflight](NAMING.md#2026-09-30-publication-preflight).
+remains disabled (`publish = false`). Preparation approval alone is not source
+qualification or publication; recorded acceptance below binds exact source.
+See [registry preflight](NAMING.md#2026-09-30-publication-preflight).
 
 Read `docs/plans/unix-first-go-live/evidence/R0.md`. Candidate SHA, version,
 workflow revision, matrix, checksum contract, P0/Unix-P1 disposition ledger,
@@ -40,6 +41,22 @@ R2 macOS arm64 receipt must bind exact candidate SHA, `aarch64-apple-darwin`,
 the `lightr` CLI built with `--features vz`, artifact filename/SHA-256, binary
 SHA-256, named Apple Silicon hardware, and signed/notarized or unsigned status.
 Cross-build or Intel execution cannot substitute for this identity.
+
+### 0.1.1 Owner Waiver
+
+For version `0.1.1`, recorded acceptance binds source/workflow
+`ca88415b5e34cfefa4fef1eae9ea13511c30f718`; the [owner decision](https://github.com/gmhelmold/hugr-lightr/issues/187#issuecomment-5927803638)
+accepts the recorded OCI/artifact/fresh-install receipts subject to waiver of
+packaged-binary VZ as a publication predecessor. Overall candidate R3 is accepted
+for this release scope: both fresh installs passed. **VZ is waived, NOT EXECUTED,
+and unvalidated; full R2 remains incomplete.** Historical `PARTIAL`/incomplete
+receipts retain their measured status. [#113](https://github.com/gmhelmold/hugr-lightr/issues/113)
+remains open for future dedicated-hardware evidence; no VZ sandbox guarantee or
+performance claim follows. See the separate [policy acceptance receipt](plans/unix-first-go-live/evidence/R0-0.1.1-owner-waivers.md).
+The documentation commit is not qualified. Any changed publication source needs
+a new final R0 and rerun receipts; recorded acceptance does not qualify it.
+The VZ-only waiver remains limited to 0.1.1. Actual public `release.yml` outputs,
+authenticated publisher rights, and explicit publication actions remain required.
 
 ## Signing Policy
 
@@ -63,13 +80,15 @@ requires Boolean-true `com.apple.security.virtualization`. It retains
 Developer ID signing nor notarization. The [hosted partial-evidence phase](plans/unix-first-go-live.md#hosted-partial-evidence-execution-sequencing)
 uses merged #264 and [#266](https://github.com/gmhelmold/hugr-lightr/pull/266);
 it does not execute the public release workflow or qualify its output by
-inference. VZ remains NOT EXECUTED; full R2 and overall R3 remain incomplete.
+inference. VZ remains NOT EXECUTED and full R2 incomplete; the
+[0.1.1 owner waiver](#011-owner-waiver) accepts candidate R3 for that scope only.
 
 ## Crates.io Order
 
-Only after explicit owner G-PUBLISH, the required receipts and authenticated
-publishing-rights checks may the owner enable publication and execute this
-0.1.1 dependency order. Recheck exact registry versions immediately beforehand;
+Prepare intended publication manifests before final R0, as ordered below.
+Only after final qualification, actual public-output qualification, authenticated
+publishing-rights checks, and explicit owner execution authorization may the owner
+execute this 0.1.1 dependency order. Recheck exact registry versions immediately beforehand;
 yanked 0.1.0 versions remain immutable. Wait for each dependency tier to index:
 
 ```sh
@@ -93,16 +112,20 @@ release packages. Do not use `cargo publish --workspace`.
 
 ## Owner Publish Order
 
-1. Recheck R0-R3 receipts against frozen candidate SHA/version. Stop on any mismatch.
-2. Change `Cargo.toml` `publish = true` in owner-controlled release change; publish crates in listed order.
-3. Create and push `v<version>` tag at frozen candidate SHA. Tag alone builds, uploads, and releases nothing.
-4. In Actions, manually dispatch `release.yml` with that exact candidate SHA and existing tag. GitHub Environment `G-PUBLISH` owner approval gates every remote artifact upload and draft-release creation.
-5. Verify each tarball with its individual `.sha256`; attach receipts and retain artifact URLs.
-6. Fill installer release base/version and formula URLs/SHA-256 values only from verified release assets. Mac URL must match signed or `-unsigned` receipt status.
-7. Human owner reviews draft scope and explicitly performs `G-PUBLISH`.
+1. Obtain explicit owner authorization for intended crate-and-binary publication preparation; confirm authenticated publishing rights for every intended crate and check exact registry versions before any irreversible tag action. Rights remain unconfirmed. The binary pipeline does not require `publish = true`; omitting crates requires an explicit owner scope choice, not an artifact-only default.
+2. If crates are included, prepare `publish = true` for intended packages in an owner-controlled release change BEFORE final R0. Any source, manifest, or workflow change invalidates prior candidate qualification: freeze the complete prepared source anew and rerun Linux and hosted macOS OCI/artifact/fresh-install receipts for that one SHA. Only VZ is waived for 0.1.1; old `ca88415` evidence does not qualify changed source. Do not tag the old candidate and then change publication manifests or retag the same version.
+3. Only after final qualification and explicit owner execution authorization, create/push annotated `v0.1.1` (signed if configured) at the final immutable SHA. Manually dispatch `release.yml` from that workflow revision with that exact SHA/tag; required `G-PUBLISH` reviews gate uploads and creation of a DRAFT, not promotion. Tag alone builds, uploads, and releases nothing.
+4. Independently qualify ACTUAL public-workflow outputs: verify original individual `.sha256` files, artifact/binary identities, architecture/features, and macOS `codesign --verify --strict` plus Boolean-true `com.apple.security.virtualization` and truthful signing status. Complete fresh Linux and macOS checksum/install/version/help/hash/cleanup receipts using those exact output bytes. Cached RC outputs do not inherit or substitute for this qualification.
+5. Only after that qualification and renewed exact-version/authenticated-rights checks, obtain explicit owner authorization for irreversible serial crate publication in the listed dependency order. Wait for each dependency tier to index; do not change manifests after final qualification or tag.
+6. Fill installer release base/version and formula URLs/SHA-256 values only from exact verified release assets. Mac URL must match signed or `-unsigned` receipt status; attach receipts and retain URLs.
+7. Human owner reviews the verified draft scope and explicitly authorizes promotion through `G-PUBLISH`. Neither waiver nor self-review permission authorizes any execution step above.
 
 Secrets, `publish = true`, manual workflow dispatch, environment approval,
-release upload, and draft promotion are owner actions. Configure `G-PUBLISH`
-with required owner reviewers; do not grant self-review bypass. Stop on name
-conflict, failed checksum, failed upload, missing native hardware witness, or
+release upload, and draft promotion are owner actions. The explicit
+[self-review exception](https://github.com/gmhelmold/hugr-lightr/issues/187#issuecomment-5927682740)
+permits `gmhelmold` to review a job initiated by that account: environment
+`23185655139` retains required reviewer **User gmhelmold / 265327906**,
+`prevent_self_review=false`, and `can_admins_bypass=false`. Explicit environment
+review remains required; this setting does not auto-approve or authorize publication.
+Stop on name conflict, failed checksum/upload, an unwaived missing witness, or
 identity mismatch. Do not repair released artifact in place.

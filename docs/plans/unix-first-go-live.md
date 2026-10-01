@@ -34,6 +34,26 @@ R0 candidate freeze and artifact scope
 
 ## R0 Candidate Freeze And Artifact Scope
 
+### 0.1.1 Release-Specific Acceptance
+
+The [owner waiver](https://github.com/gmhelmold/hugr-lightr/issues/187#issuecomment-5927803638)
+is limited to version `0.1.1`; recorded acceptance binds source/workflow
+`ca88415b5e34cfefa4fef1eae9ea13511c30f718`, and the unchanged Linux x86_64/macOS
+arm64 matrix. Recorded OCI/artifact/fresh-install receipts are accepted subject
+to waiver of packaged-binary VZ as the R2 publication predecessor. Both fresh
+installs passed; overall candidate R3 is accepted for this release scope by waiver.
+**VZ is waived, NOT EXECUTED, and unvalidated; full R2 remains incomplete.**
+Historical `PARTIAL`/incomplete statuses remain execution evidence. Full R2 VZ
+requirements below remain for future qualification; [#113](https://github.com/gmhelmold/hugr-lightr/issues/113)
+stays open. The [separate policy receipt](unix-first-go-live/evidence/R0-0.1.1-owner-waivers.md)
+records acceptance without a VZ pass, sandbox guarantee, or performance claim.
+Actual public `release.yml` byte qualification, publisher-rights checks, and
+explicit owner publication actions still gate R4; this documentation commit is not qualified.
+Intended crate manifests must be prepared before final R0 under
+[Owner Publish Order](../RELEASE.md#owner-publish-order). Any source/manifest/workflow
+change requires a new freeze and rerun Linux/hosted receipts; old accepted evidence
+does not qualify changed source. The VZ-only 0.1.1 waiver does not waive these reruns.
+
 ### Success Criteria
 
 - Freeze one release candidate source commit, release version, and intended Linux
@@ -59,8 +79,9 @@ R0 candidate freeze and artifact scope
 
 ### Quality Standards
 
-- No tag, `cargo publish`, `publish = true`, release upload, or placeholder
-  substitution during R0.
+- No tag, `cargo publish`, manifest toggle, release upload, or placeholder
+  substitution during final R0 qualification. Prepare owner-authorized intended
+  crate `publish = true` manifests before the freeze, not after qualification.
 - Candidate identity is immutable for R1-R3. Any source, workflow, package, or
   artifact-scope change restarts R0.
 
@@ -193,20 +214,22 @@ inspection in the receipt. Pack assembly still needs Rust's guest musl target;
 
 The [owner execution deferral](https://github.com/gmhelmold/hugr-lightr/issues/187#issuecomment-5918255831)
 permits hosted OCI/artifact/signature/install evidence while dedicated Apple
-Silicon VZ execution is unavailable. It changes sequencing only; [#113](https://github.com/gmhelmold/hugr-lightr/issues/113)
-and the full R2 requirements remain. [Hosted arm64 macOS runners do not support
+Silicon VZ execution is unavailable. That decision changed sequencing only;
+the later [0.1.1 acceptance](#011-release-specific-acceptance) waives the VZ
+publication predecessor for that frozen release only. [Hosted arm64 macOS runners do not support
 nested virtualization](https://docs.github.com/en/actions/reference/runners/github-hosted-runners#limitations-for-arm64-macos-runners).
-Every hosted receipt must say **VZ NOT EXECUTED; full R2 and overall R3 incomplete**.
+Measured hosted receipts retain **VZ NOT EXECUTED; full R2 and overall R3 incomplete**;
+release-specific policy acceptance is recorded separately.
 
 The hosted phase uses merged [#264 public unsigned entitlement repair](https://github.com/gmhelmold/hugr-lightr/pull/264)
 and [#266 manual hosted workflow](https://github.com/gmhelmold/hugr-lightr/pull/266),
 using the [#265 helper](https://github.com/gmhelmold/hugr-lightr/pull/265).
 The [owner-approved 0.1.1 preparation](https://github.com/gmhelmold/hugr-lightr/issues/187#issuecomment-5921245830)
 is complete: workspace/package/exact pins are prepared, publication remains
-disabled, and hosted artifact paths derive from the source version. Await
-the [new R0 source freeze](../RELEASE.md#r0-candidate), then rerun Linux and macOS
-receipts for that common SHA. Earlier Linux receipts do not qualify the new
-candidate. These are planned commands, not execution evidence.
+disabled, and hosted artifact paths derive from the source version. The
+[R0 freeze](unix-first-go-live/evidence/R0.md) now binds the common 0.1.1 SHA;
+executed Linux/macOS receipts are accepted under the release-specific clause.
+Earlier candidates do not qualify it. Commands below describe sequencing, not receipts.
 
 Set `CANDIDATE_SHA` to the reviewed R0 lowercase 40-character SHA and
 `CANDIDATE_REF` to an existing branch resolving to it. Both workflows must
@@ -236,8 +259,8 @@ identity and environment, exact argv/exit codes and outputs, signing state,
 artifact/binary/receipt SHA-256 values, run/job/attempt URLs, immutable artifact
 IDs and raw artifact links. Preserve `macos-build/receipt.json`,
 `macos-build/commands.json`, command logs and Apple-tool control results.
-This subsection supplies no receipt or claimed success; full R2 still requires
-the packaged-binary VZ witness above on suitable Apple Silicon hardware.
+Full R2 still requires the packaged-binary VZ witness above on suitable Apple
+Silicon hardware; it is waived as a 0.1.1 predecessor only under the acceptance clause.
 
 ## R3 Clean-Machine Linux And macOS Arm64 Install, Checksum, Smoke
 
@@ -291,8 +314,9 @@ install, binary-hash comparison, version/help smoke, and fresh-HOME cleanup.
 After execution and review, record results in
 `docs/plans/unix-first-go-live/evidence/R3-macos-arm64.md`, retaining the identities,
 hashes and raw links above plus `macos-install/{receipt.json,commands.json}` and
-logs. Mark VZ NOT EXECUTED, full R2 and overall R3 incomplete; hosted install
-evidence does not waive the R2 predecessor or authorize publication.
+logs. Preserve original VZ NOT EXECUTED/full R2/overall R3 incomplete labels.
+Hosted install evidence alone grants no waiver or publication authority; the
+separate owner waiver accepts overall candidate R3 for 0.1.1 only.
 
 ## R4 Owner G-PUBLISH
 
@@ -322,6 +346,10 @@ evidence does not waive the R2 predecessor or authorize publication.
 ### Invariants
 
 - Only human owner can execute `G-PUBLISH`.
+- The [explicit owner self-review exception](https://github.com/gmhelmold/hugr-lightr/issues/187#issuecomment-5927682740)
+  permits `gmhelmold` to review their own initiated job in environment `23185655139`;
+  required reviewer User `gmhelmold` / `265327906` remains, with
+  `prevent_self_review=false`, `can_admins_bypass=false`, and explicit review required.
 - This PR, CI, or a green R0-R3 receipt is not publication authorization.
 
 ## Separate Work
