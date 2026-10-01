@@ -5,6 +5,8 @@ use std::fs;
 use std::io;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::os::fd::AsRawFd;
+#[cfg(unix)]
+use std::os::unix::process::ExitStatusExt;
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
@@ -13,6 +15,35 @@ use tempfile::TempDir;
 const CHILD: &str = "store::foundation::anchored_scratch::reaper_tests::reaper_child_probe";
 const ROOT_ENV: &str = "LIGHTR_SI01_REAPER_CHILD_ROOT";
 const READY_ENV: &str = "LIGHTR_SI01_REAPER_CHILD_READY";
+
+#[cfg(unix)]
+fn kill_scratch_owner(child: &mut std::process::Child, staging: &Path) {
+    let owned: Vec<_> = fs::read_dir(staging)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| {
+            path.file_name()
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .starts_with(".tmp-")
+        })
+        .collect();
+    assert_eq!(owned.len(), 1, "expected one owned scratch fixture");
+    // Child::wait closes stdin; keep EOF from letting the worker Drop its scratch.
+    let writer = child
+        .stdin
+        .take()
+        .expect("scratch owner requires piped stdin");
+    child.kill().unwrap();
+    let status = child.wait().unwrap();
+    assert_eq!(status.signal(), Some(libc::SIGKILL));
+    drop(writer);
+    assert!(
+        owned[0].is_dir(),
+        "owned scratch fixture vanished before reaping"
+    );
+}
 
 #[cfg(target_os = "linux")]
 const OWNERSHIP_XATTR: &[u8] = b"user.lightr.si01.owned-scratch\0";
@@ -163,8 +194,7 @@ fn reaper_removes_owned_stale_scratch_after_owner_dies() {
     }
     let staging = root.path().join(".si01-staging");
     assert_eq!(fs::read_dir(&staging).unwrap().count(), 1);
-    child.kill().unwrap();
-    assert!(!child.wait().unwrap().success());
+    kill_scratch_owner(&mut child, &staging);
     let guard = domain.exclusive(Wait::Try).unwrap();
 
     assert_eq!(reap_owned_scratch(&domain, &guard).unwrap(), 1);
@@ -203,8 +233,7 @@ fn reaper_skips_malformed_ownership_and_reaps_later_owned_scratch() {
         );
         std::thread::park_timeout(Duration::from_millis(2));
     }
-    child.kill().unwrap();
-    assert!(!child.wait().unwrap().success());
+    kill_scratch_owner(&mut child, &staging);
     let guard = domain.exclusive(Wait::Try).unwrap();
 
     assert_eq!(reap_owned_scratch(&domain, &guard).unwrap(), 1);
@@ -244,8 +273,7 @@ fn reaper_skips_short_malformed_ownership_and_reaps_later_owned_scratch() {
         );
         std::thread::park_timeout(Duration::from_millis(2));
     }
-    child.kill().unwrap();
-    assert!(!child.wait().unwrap().success());
+    kill_scratch_owner(&mut child, &staging);
     let guard = domain.exclusive(Wait::Try).unwrap();
 
     assert_eq!(reap_owned_scratch(&domain, &guard).unwrap(), 1);
@@ -287,8 +315,7 @@ fn reaper_preserves_replacement_after_ownership_validation() {
         .unwrap()
         .unwrap()
         .path();
-    child.kill().unwrap();
-    assert!(!child.wait().unwrap().success());
+    kill_scratch_owner(&mut child, &staging_path);
     let guard = domain.exclusive(Wait::Try).unwrap();
     let staging = guard.staging().unwrap();
     let replacement = root.path().join("retained-stale");
