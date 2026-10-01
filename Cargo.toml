@@ -22,7 +22,7 @@ members = [
 exclude = ["crates/lightr-cri-serve"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 license = "Apache-2.0"
 repository = "https://github.com/HumanGuardrail/hugr-lightr"
@@ -63,15 +63,15 @@ windows-sys = { version = "0.59", features = [
     "Win32_System_Pipes",
     "Win32_System_Threading",
 ] }
-lightr-core = { path = "crates/lightr-core" }
-lightr-store = { path = "crates/lightr-store" }
-lightr-index = { path = "crates/lightr-index" }
-lightr-init = { path = "crates/lightr-init" }
-lightr-run = { path = "crates/lightr-run" }
-lightr-oci = { path = "crates/lightr-oci" }
-lightr-engine = { path = "crates/lightr-engine" }
-lightr-build = { path = "crates/lightr-build" }
-lightr-views = { path = "crates/lightr-views" }
+lightr-core = { path = "crates/lightr-core", version = "=0.1.1" }
+lightr-store = { path = "crates/lightr-store", version = "=0.1.1" }
+lightr-index = { path = "crates/lightr-index", version = "=0.1.1" }
+lightr-init = { path = "crates/lightr-init", version = "=0.1.1" }
+lightr-run = { path = "crates/lightr-run", version = "=0.1.1" }
+lightr-oci = { path = "crates/lightr-oci", version = "=0.1.1" }
+lightr-engine = { path = "crates/lightr-engine", version = "=0.1.1" }
+lightr-build = { path = "crates/lightr-build", version = "=0.1.1" }
+lightr-views = { path = "crates/lightr-views", version = "=0.1.1" }
 
 [profile.release]
 lto = "fat"

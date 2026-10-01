@@ -471,8 +471,29 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
 
 [[package]]
+name = "hugr-lightr"
+version = "0.1.1"
+dependencies = [
+ "clap",
+ "clap_complete",
+ "clap_mangen",
+ "libc",
+ "lightr-build",
+ "lightr-core",
+ "lightr-engine",
+ "lightr-index",
+ "lightr-oci",
+ "lightr-run",
+ "lightr-store",
+ "serde",
+ "serde_json",
+ "tar",
+ "tempfile",
+]
+
+[[package]]
 name = "hugr-lightr-cri-backend"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "blake3",
  "libc",
@@ -655,7 +676,7 @@ checksum = "68ab91017fe16c622486840e4c83c9a37afeff978bd239b5293d61ece587de66"
 
 [[package]]
 name = "lightr-acceptance"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "assert_cmd",
  "flate2",
@@ -667,7 +688,7 @@ dependencies = [
 
 [[package]]
 name = "lightr-build"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "blake3",
  "bzip2",
@@ -690,29 +711,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "lightr-cli"
-version = "0.1.0"
-dependencies = [
- "clap",
- "clap_complete",
- "clap_mangen",
- "libc",
- "lightr-build",
- "lightr-core",
- "lightr-engine",
- "lightr-index",
- "lightr-oci",
- "lightr-run",
- "lightr-store",
- "serde",
- "serde_json",
- "tar",
- "tempfile",
-]
-
-[[package]]
 name = "lightr-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "blake3",
  "memmap2",
@@ -721,7 +721,7 @@ dependencies = [
 
 [[package]]
 name = "lightr-engine"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "libc",
  "lightr-core",
@@ -736,7 +736,7 @@ dependencies = [
 
 [[package]]
 name = "lightr-index"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "ignore",
  "lightr-core",
@@ -749,7 +749,7 @@ dependencies = [
 
 [[package]]
 name = "lightr-init"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "libc",
  "serde",
@@ -758,7 +758,7 @@ dependencies = [
 
 [[package]]
 name = "lightr-oci"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "flate2",
  "lightr-core",
@@ -775,7 +775,7 @@ dependencies = [
 
 [[package]]
 name = "lightr-run"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "blake3",
  "libc",
@@ -792,7 +792,7 @@ dependencies = [
 
 [[package]]
 name = "lightr-store"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "libc",
  "lightr-core",
@@ -804,7 +804,7 @@ dependencies = [
 
 [[package]]
 name = "lightr-views"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "lightr-core",
  "lightr-store",
