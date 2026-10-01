@@ -1,9 +1,9 @@
 # RELEASE: Owner G-PUBLISH Runbook
 
 This procedure authorizes nothing. R0-R3 receipts for one frozen candidate and
-explicit human-owner `G-PUBLISH` are required before publication or secret use.
-The recorded candidate remains `publish = false`. Intended crate publication
-must be prepared before the final R0 freeze. A tag alone creates no asset or release.
+explicit human-owner `G-PUBLISH` are required before publication.
+The prepared candidate has `publish = true` for eleven intended root packages;
+crate upload/promotion remain unauthorized; the narrow tag/draft exception below applies. A tag alone creates no asset or release.
 
 ## Frozen Public Matrix
 
@@ -23,15 +23,15 @@ The owner-approved **0.1.1 preparation** sets the workspace version to `0.1.1`, 
 Approval is recorded in the 2026-09-30
 [#187 owner comment](https://github.com/gmhelmold/hugr-lightr/issues/187#issuecomment-5921245830).
 [Source preparation](https://github.com/gmhelmold/hugr-lightr/pull/272) includes
-root workspace path dependencies pinned to `version = "=0.1.1"`; publication
-remains disabled (`publish = false`). Preparation approval alone is not source
+root workspace path dependencies pinned to `version = "=0.1.1"`; [owner-authorized preparation](https://github.com/gmhelmold/hugr-lightr/issues/187#issuecomment-5928309446)
+and [#278](https://github.com/gmhelmold/hugr-lightr/pull/278) now set intended root packages to `publish = true`. Preparation alone is not source
 qualification or publication; recorded acceptance below binds exact source.
 See [registry preflight](NAMING.md#2026-09-30-publication-preflight).
 
 Read `docs/plans/unix-first-go-live/evidence/R0.md`. Candidate SHA, version,
 workflow revision, matrix, checksum contract, P0/Unix-P1 disposition ledger,
-and nonpublic-target disposition must agree before R1 or R2 begins. Any source,
-workflow, package, or artifact-scope change requires a new R0 receipt.
+and nonpublic-target disposition must agree before R1 or R2 begins. Any selected
+publication-source, producer-workflow, package or artifact-scope change restarts R0.
 
 The 0.1.1 version/package/pin and associated build/workflow changes require a
 new R0 freeze and new R1-R3 execution. Historical `d09f6c3` Linux receipts prove
@@ -45,7 +45,7 @@ Cross-build or Intel execution cannot substitute for this identity.
 ### 0.1.1 Owner Waiver
 
 For version `0.1.1`, recorded acceptance binds source/workflow
-`ca88415b5e34cfefa4fef1eae9ea13511c30f718`; the [owner decision](https://github.com/gmhelmold/hugr-lightr/issues/187#issuecomment-5927803638)
+`47f02795d0884956c4755254b5f6fc377a5938b5` under the [prepared-source freeze](https://github.com/gmhelmold/hugr-lightr/issues/187#issuecomment-5928998891); the [owner decision](https://github.com/gmhelmold/hugr-lightr/issues/187#issuecomment-5927803638)
 accepts the recorded OCI/artifact/fresh-install receipts subject to waiver of
 packaged-binary VZ as a publication predecessor. Overall candidate R3 is accepted
 for this release scope: both fresh installs passed. **VZ is waived, NOT EXECUTED,
@@ -56,7 +56,9 @@ performance claim follows. See the separate [policy acceptance receipt](plans/un
 The documentation commit is not qualified. Any changed publication source needs
 a new final R0 and rerun receipts; recorded acceptance does not qualify it.
 The VZ-only waiver remains limited to 0.1.1. Actual public `release.yml` outputs,
-authenticated publisher rights, and explicit publication actions remain required.
+publisher write-scope proof, and explicit publication actions remain required.
+Historical `ca88415` acceptance does not qualify this source. [GET preflight](plans/unix-first-go-live/evidence/R4-publisher-preflight.md)
+proved identity/direct ownership and trusted-publishing scope only; publish-new/update remain unverified.
 
 ## Signing Policy
 
@@ -112,8 +114,12 @@ release packages. Do not use `cargo publish --workspace`.
 
 ## Owner Publish Order
 
-1. Obtain explicit owner authorization for intended crate-and-binary publication preparation; confirm authenticated publishing rights for every intended crate and check exact registry versions before any irreversible tag action. Rights remain unconfirmed. The binary pipeline does not require `publish = true`; omitting crates requires an explicit owner scope choice, not an artifact-only default.
-2. If crates are included, prepare `publish = true` for intended packages in an owner-controlled release change BEFORE final R0. Any source, manifest, or workflow change invalidates prior candidate qualification: freeze the complete prepared source anew and rerun Linux and hosted macOS OCI/artifact/fresh-install receipts for that one SHA. Only VZ is waived for 0.1.1; old `ca88415` evidence does not qualify changed source. Do not tag the old candidate and then change publication manifests or retag the same version.
+**0.1.1 order exception:** [owner choice "Autorizar tag e draft"](https://github.com/gmhelmold/hugr-lightr/issues/187#issuecomment-5929619780) authorizes annotated `v0.1.1` at `47f02795d0884956c4755254b5f6fc377a5938b5`, `release.yml` dispatch, explicit `G-PUBLISH` reviews, uploads and DRAFT qualification before publish-new/update scope proof. This advances binary qualification only; crate publication/promotion remain unauthorized. Default rights-before-tag order otherwise remains.
+Producer completed and immutable-ID DRAFT created; [R4](plans/unix-first-go-live/evidence/R4-publisher-preflight.md) records independent byte-provenance checks. Native public fresh-install qualification remains PENDING.
+An independent consumer records its own workflow SHA separately when available; it neither qualifies its own source nor changes the frozen `47f0279` producer. Changing selected publication source/producer workflow restarts R0 and reruns.
+
+1. Owner authorized crates + binaries preparation; #278 and the current R0 freeze record it. GET identity/ownership checks passed; confirm publishing write scopes for every intended crate and exact registry versions before any irreversible tag action. These execution permissions remain pending.
+2. Intended packages are already `publish = true` in frozen `47f0279`. Any change to selected publication source, manifests or producer workflow invalidates qualification: freeze changed source anew and rerun Linux/hosted receipts. Only VZ is waived for 0.1.1; historical `ca88415` evidence does not qualify changed source. Do not change manifests after qualification or retag the same version.
 3. Only after final qualification and explicit owner execution authorization, create/push annotated `v0.1.1` (signed if configured) at the final immutable SHA. Manually dispatch `release.yml` from that workflow revision with that exact SHA/tag; required `G-PUBLISH` reviews gate uploads and creation of a DRAFT, not promotion. Tag alone builds, uploads, and releases nothing.
 4. Independently qualify ACTUAL public-workflow outputs: verify original individual `.sha256` files, artifact/binary identities, architecture/features, and macOS `codesign --verify --strict` plus Boolean-true `com.apple.security.virtualization` and truthful signing status. Complete fresh Linux and macOS checksum/install/version/help/hash/cleanup receipts using those exact output bytes. Cached RC outputs do not inherit or substitute for this qualification.
 5. Only after that qualification and renewed exact-version/authenticated-rights checks, obtain explicit owner authorization for irreversible serial crate publication in the listed dependency order. Wait for each dependency tier to index; do not change manifests after final qualification or tag.

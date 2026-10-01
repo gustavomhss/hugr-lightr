@@ -1,35 +1,35 @@
 # R1 Linux x86_64 Receipt
 
 **Status:** Linux verified for immutable source and workflow revision
-`ca88415b5e34cfefa4fef1eae9ea13511c30f718`, version `0.1.1`.
+`47f02795d0884956c4755254b5f6fc377a5938b5`, version `0.1.1`.
 This documentation was recorded after candidate verification; its documentation
 commit is not itself qualified. Authority: [#187 re-freeze][freeze]; requirements:
 [R1 plan](../../unix-first-go-live.md#r1-linux-oci-verification).
 
 ## Evidence and identity
 
-- [Run 36823107072][run], attempt 1, `workflow_dispatch`, completed successfully
-  on 2026-10-01; [R1 job 110242756699][job] completed at `06:09:47Z`.
-- [R1 artifact 11144330730][artifact], created `2026-10-01T06:09:45Z`;
-  API retention expires `2026-10-31T06:09:45Z` (30 days).
+- [Run 36845506826][run], attempt 1, `workflow_dispatch`, completed successfully
+  on 2026-10-01; [R1 job 110314563642][job] completed at `09:55:02Z`.
+- [R1 artifact 11153018739][artifact], created `2026-10-01T09:55:00Z`;
+  API retention expires `2026-10-31T09:55:00Z` (30 days).
   Raw receipt: `r1-receipt/R1-linux-x86_64.json`; exact argv/exit codes:
   `r1-receipt/commands.jsonl`; witness outcomes: `r1-receipt/witnesses.jsonl`.
   Full outputs: `r1-receipt/oci-full.log`, `r1-receipt/package.log`, and each
   `r1-receipt/<exact test basename>.log` listed by the raw receipt's `log` fields.
-- GitHub-hosted runner ID `1000044017`, Ubuntu `24.04.5` LTS,
-  `Linux 6.17.0-1022-azure x86_64`; runner image `20260927.320.1`.
+- GitHub-hosted runner ID `1000044114`, Ubuntu `24.04.5` LTS,
+  `Linux 6.17.0-1022-azure x86_64`; runner image `20260920.314.1`.
   Rust: `rustc 1.96.0 (ac68faa20 2026-05-25)`.
   `LIGHTR_NET_TESTS=1`, `RUSTFLAGS="-D warnings"`; network pull was enabled.
 - Artifact: `packaging/dist/lightr-0.1.1-linux-x86_64.tar.gz` with matching
   `.sha256`, exactly one `<hash>  <filename>\n` record.
-  Tarball SHA-256: `deb3ad351d248187a8577642f8cce1023e1c6b70091b059e3cdf268d2ff33616`.
-  Binary SHA-256: `d6f6a4e496554f28378f3e324bdb7ef5dc85100def883cabbf55a562cd3fd568`.
+  Tarball SHA-256: `e217569cf96e349fdeeea5bdde657738be7cba544557189517f45df9946a070a`.
+  Binary SHA-256: `d237fb33a067261396e0b9e195fc4804ad492b75fb5b3356476e0f1548449352`.
   Archive contains only regular executable `lightr`, mode `0755`, ELF64 x86_64.
   Signing/notarization: **n/a (Linux)**.
 - Downloaded R1 ZIP SHA-256 matches API metadata:
-  `8e89ce60ddea70b25e6ba388b23c12548fe2ae755543db88aface54a89dd9dcb`.
+  `8aedfdc1d497d4e9420a24917fd5ede09266f0fd07a3fb03ae74af362470b62b`.
   [Raw ZIP API][zip]; receipt JSON SHA-256:
-  `3db5398f6192fc3af58744b6571fc3bb9b8c1fa47699df524aef2d6c68808348`.
+  `07dae6f266fb9dbc4b242fee6ca032d4c1ee4c0b65c4394d10378ea9662bb9eb`.
 
 ## Exact executed commands and outcomes
 
@@ -66,7 +66,7 @@ both trees after stage replacement.
 ## Independent checksum controls
 
 Independent review bundle:
-`/var/folders/lt/z11pyzhj0m17vn798jkk69hh0000gn/T/opencode/lightr-receipt-36823107072.VIhsrg`.
+`/var/folders/lt/z11pyzhj0m17vn798jkk69hh0000gn/T/opencode/lightr-receipt-36845506826.LxtarH`.
 `calibration.json` records exact argv/results; `evidence-manifest.json` binds bytes.
 Valid ZIPs (cwd bundle root) and tarball (cwd `packaging/dist`) passed:
 
@@ -80,17 +80,18 @@ shasum -a 256 -c lightr-0.1.1-linux-x86_64.tar.gz.sha256
 All exited `0` (`: OK`). In `corrupt-controls/`, both ZIP checkers used
 `zip-checksum.txt`; both tarball checkers used the same tarball argv above.
 All corrupted-copy checks exited `1` (`: FAILED`, one computed checksum mismatch).
-Corrupted tarball SHA-256: `b495b774da12cd1f6e4c75f0efda8926a6a65482a46b65e6fbe57fbda130dd81`.
+Corrupted tarball SHA-256: `b7e9abd9a6555c4ced11bd2a62fadf064aa09c0ea5d88bc7318a7205676dbfb6`.
 Review also rejected zero-pass/missing-name witness transcripts and skipped API
 step controls (`verification.json`). These are review controls, not workflow runs.
 
 R1 is Linux-only evidence. [Hosted macOS partial evidence](R2-macos-arm64-hosted.md)
-passed; **VZ NOT EXECUTED; full R2 and overall R3 incomplete**. Public `release.yml`
-outputs are not qualified; owner `G-PUBLISH` pending, `publish = false`.
+passed; **VZ NOT EXECUTED/unvalidated; full R2 incomplete**. Raw hosted R3 remains
+incomplete; [owner policy](R0-0.1.1-owner-waivers.md) accepts candidate R3 for 0.1.1 only.
+Public `release.yml` outputs unqualified; `G-PUBLISH` pending, `publish = true` prepared.
 Previous receipts remain historical run links in [R0](R0.md); no performance claim.
 
-[freeze]: https://github.com/gmhelmold/hugr-lightr/issues/187#issuecomment-5925747505
-[run]: https://github.com/gmhelmold/hugr-lightr/actions/runs/36823107072
-[job]: https://github.com/gmhelmold/hugr-lightr/actions/runs/36823107072/job/110242756699
-[artifact]: https://github.com/gmhelmold/hugr-lightr/actions/runs/36823107072/artifacts/11144330730
-[zip]: https://api.github.com/repos/gmhelmold/hugr-lightr/actions/artifacts/11144330730/zip
+[freeze]: https://github.com/gmhelmold/hugr-lightr/issues/187#issuecomment-5928998891
+[run]: https://github.com/gmhelmold/hugr-lightr/actions/runs/36845506826
+[job]: https://github.com/gmhelmold/hugr-lightr/actions/runs/36845506826/job/110314563642
+[artifact]: https://github.com/gmhelmold/hugr-lightr/actions/runs/36845506826/artifacts/11153018739
+[zip]: https://api.github.com/repos/gmhelmold/hugr-lightr/actions/artifacts/11153018739/zip

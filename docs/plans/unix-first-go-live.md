@@ -38,7 +38,7 @@ R0 candidate freeze and artifact scope
 
 The [owner waiver](https://github.com/gmhelmold/hugr-lightr/issues/187#issuecomment-5927803638)
 is limited to version `0.1.1`; recorded acceptance binds source/workflow
-`ca88415b5e34cfefa4fef1eae9ea13511c30f718`, and the unchanged Linux x86_64/macOS
+`47f02795d0884956c4755254b5f6fc377a5938b5` under the [prepared-source freeze](https://github.com/gmhelmold/hugr-lightr/issues/187#issuecomment-5928998891), and the unchanged Linux x86_64/macOS
 arm64 matrix. Recorded OCI/artifact/fresh-install receipts are accepted subject
 to waiver of packaged-binary VZ as the R2 publication predecessor. Both fresh
 installs passed; overall candidate R3 is accepted for this release scope by waiver.
@@ -49,8 +49,9 @@ stays open. The [separate policy receipt](unix-first-go-live/evidence/R0-0.1.1-o
 records acceptance without a VZ pass, sandbox guarantee, or performance claim.
 Actual public `release.yml` byte qualification, publisher-rights checks, and
 explicit owner publication actions still gate R4; this documentation commit is not qualified.
+[Publisher GET preflight](unix-first-go-live/evidence/R4-publisher-preflight.md) proves identity/direct ownership and trusted-publishing scope only; write scopes remain unverified.
 Intended crate manifests must be prepared before final R0 under
-[Owner Publish Order](../RELEASE.md#owner-publish-order). Any source/manifest/workflow
+[Owner Publish Order](../RELEASE.md#owner-publish-order), including its explicit tag/draft order exception. Any selected publication-source/manifest/producer-workflow
 change requires a new freeze and rerun Linux/hosted receipts; old accepted evidence
 does not qualify changed source. The VZ-only 0.1.1 waiver does not waive these reruns.
 
@@ -224,9 +225,9 @@ release-specific policy acceptance is recorded separately.
 The hosted phase uses merged [#264 public unsigned entitlement repair](https://github.com/gmhelmold/hugr-lightr/pull/264)
 and [#266 manual hosted workflow](https://github.com/gmhelmold/hugr-lightr/pull/266),
 using the [#265 helper](https://github.com/gmhelmold/hugr-lightr/pull/265).
-The [owner-approved 0.1.1 preparation](https://github.com/gmhelmold/hugr-lightr/issues/187#issuecomment-5921245830)
-is complete: workspace/package/exact pins are prepared, publication remains
-disabled, and hosted artifact paths derive from the source version. The
+The [owner-approved publication preparation](https://github.com/gmhelmold/hugr-lightr/issues/187#issuecomment-5928309446)
+is complete through #278: eleven intended root packages inherit `publish = true`,
+exclusions remain; no upload authorization follows. Hosted artifact paths derive from the source version. The
 [R0 freeze](unix-first-go-live/evidence/R0.md) now binds the common 0.1.1 SHA;
 executed Linux/macOS receipts are accepted under the release-specific clause.
 Earlier candidates do not qualify it. Commands below describe sequencing, not receipts.
