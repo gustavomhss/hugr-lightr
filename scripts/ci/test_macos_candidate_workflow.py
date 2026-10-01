@@ -17,7 +17,7 @@ PINS = ["actions/checkout@11d5960a326750d5838078e36cf38b85af677262",
         "dtolnay/rust-toolchain@ebb3d1676050bfd0971c36c1e215b5751473994d",
         "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
         "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093"]
-HOST_IDENTITY = IDENTITY + 'test "$(uname -s)" = Darwin\ntest "$(uname -m)" = arm64\ntest "$(sysctl -n hw.optional.arm64)" = 1\n'
+HOST_IDENTITY = IDENTITY + 'test "$(uname -s)" = Darwin\ntest "$(uname -m)" = arm64\ntest "$(sysctl -n hw.optional.arm64)" = 1\n' + "python3 -c 'import sys; assert sys.version_info >= (3, 11), \"Python >=3.11 required\"; import tomllib'\n"
 GUARDS = ('set -euo pipefail\npython3 -m venv "$RUNNER_TEMP/macos-guards"\n'
           '"$RUNNER_TEMP/macos-guards/bin/python" -m pip install PyYAML==6.0.2\n'
           '"$RUNNER_TEMP/macos-guards/bin/python" scripts/ci/test_macos_candidate.py --require-apple-controls\n'
@@ -49,7 +49,7 @@ def contract(doc):
                 elif kind == PINS[1]: expected_settings = dict(toolchain="1.96.0", targets="aarch64-apple-darwin")
                 elif kind == PINS[3]: expected_settings = {"artifact-ids": "${{ needs.build.outputs.artifact-id }}", "merge-multiple": True, "path": "candidate"}
                 else:
-                    path = "macos-install/" if name != "build" else ("macos-build/" if index == 6 else f"packaging/dist/{m.ARTIFACT}\npackaging/dist/{m.ARTIFACT}.sha256\nmacos-build/\n")
+                    path = "macos-install/" if name != "build" else ("macos-build/" if index == 6 else "${{ steps.build.outputs.artifact-path }}\n${{ steps.build.outputs.checksum-path }}\nmacos-build/\n")
                     artifact_name = "macos-install" if name != "build" else ("macos-build-logs" if index == 6 else "macos-candidate")
                     expected_settings = {"name": artifact_name + "-${{ inputs.candidate_sha }}", "path": path, "if-no-files-found": "error", "retention-days": 30}
                 m.require(settings == expected_settings, "immutable download or receipt/log retention")
@@ -64,7 +64,9 @@ def contract(doc):
 class Tests(unittest.TestCase):
     def test_workflow_and_mutations(self):
         doc = yaml.safe_load(WORKFLOW.read_text()); contract(doc)
-        mutations = [lambda d: d["jobs"].update(publish={}), lambda d: d["permissions"].update(contents="write"), lambda d: d.update(permissions={})]
+        mutations = [lambda d: d["jobs"].update(publish={}), lambda d: d["permissions"].update(contents="write"), lambda d: d.update(permissions={}),
+                     lambda d: d["jobs"]["build"]["steps"][5]["with"].update(path="packaging/dist/lightr-0.1.0-darwin-arm64-unsigned.tar.gz\nmacos-build/\n"),
+                     lambda d: d["jobs"]["build"]["steps"][5]["with"].update(path="packaging/dist/*\nmacos-build/\n")]
         for job in doc["jobs"]:
             for key, value in (("if", False), ("continue-on-error", True), ("permissions", {"contents": "write"})):
                 mutations.append(lambda d, j=job, k=key, v=value: d["jobs"][j].update({k: v}))
@@ -79,15 +81,21 @@ class Tests(unittest.TestCase):
             with self.assertRaises(ValueError): contract(changed)
     def test_actual_source_host_guard(self):
         script = yaml.safe_load(WORKFLOW.read_text())["jobs"]["build"]["steps"][1]["run"]
-        for defect in (None, "sha", "workflow", "head", "os", "arch", "capability"):
+        for defect in (None, "sha", "workflow", "head", "os", "arch", "capability", "python"):
             with self.subTest(defect=defect), Fixture() as f:
                 if defect == "sha": os.environ["CANDIDATE_SHA"] = "A" * 40
                 if defect == "workflow": os.environ["WORKFLOW_SHA"] = "b" * 40
                 if defect == "head": f.tool(f.root / "tools", "git", "print('b' * 40)")
                 if defect in ("os", "arch"): f.tool(f.root / "tools", "uname", "print('Linux' if sys.argv[1] == '-s' else 'arm64')" if defect == "os" else "print('Darwin' if sys.argv[1] == '-s' else 'x86_64')")
                 if defect == "capability": f.tool(f.root / "tools", "sysctl", "print('0')")
+                if defect == "python": f.tool(f.root / "tools", "python3", "sys.version_info=(3, 10); exec(sys.argv[2])")
                 result = subprocess.run(["bash", "-c", script], capture_output=True)
                 self.assertEqual(result.returncode == 0, defect is None)
+    def test_helper_rejects_old_python(self):
+        code = f"import sys; sys.path.insert(0, {str(Path(m.__file__).parent)!r}); sys.version_info=(3, 10); import macos_candidate"
+        result = subprocess.run([sys.executable, "-S", "-c", code], capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Python >=3.11 required", result.stderr)
     def test_hosted_guard_rejects_non_darwin(self):
         script = str(Path(m.__file__).with_name("test_macos_candidate.py"))
         code = f"import runpy, sys; sys.path.insert(0, {str(Path(script).parent)!r}); sys.platform='linux'; sys.argv=[{script!r}, '--require-apple-controls']; runpy.run_path({script!r}, run_name='__main__')"

@@ -12,7 +12,10 @@ import tarfile
 import tempfile
 from xml.parsers.expat import ExpatError
 
-ARTIFACT = "lightr-0.1.0-darwin-arm64-unsigned.tar.gz"
+if sys.version_info < (3, 11):
+    raise RuntimeError("Python >=3.11 required")
+import tomllib
+
 CARGO = ["cargo", "+1.96.0", "test", "--locked", "-p", "lightr-oci", "--lib"]
 WITNESSES = [
     "oci::tests::integrity_tests::test_write_through_symlink_component_rejects_import_without_ref",
@@ -34,6 +37,18 @@ def require(condition, message):
 
 def digest(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+def declared_version():
+    try:
+        with Path("Cargo.toml").open("rb") as manifest:
+            version = tomllib.load(manifest)["workspace"]["package"]["version"]
+    except (OSError, tomllib.TOMLDecodeError, KeyError, TypeError) as error:
+        raise ValueError("missing/malformed Cargo.toml workspace.package.version") from error
+    require(isinstance(version, str) and re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version), "invalid declared version")
+    return version
+
+def artifact_name(version):
+    return f"lightr-{version}-darwin-arm64-unsigned.tar.gz"
 
 class Evidence:
     def __init__(self, path):
@@ -59,7 +74,7 @@ class Evidence:
         require(self.run("git", "rev-parse", "HEAD") == sha, "checkout identity")
         require(self.run("uname", "-s") == "Darwin" and self.run("uname", "-m") == "arm64", "native Darwin arm64 required")
         require(self.run("sysctl", "-n", "hw.optional.arm64") == "1", "arm64 capability")
-        return dict(candidate_sha=sha, workflow_sha=sha, target="aarch64-apple-darwin", version="0.1.0",
+        return dict(candidate_sha=sha, workflow_sha=sha, target="aarch64-apple-darwin", version=declared_version(),
                     model=self.run("sysctl", "-n", "hw.model"), os=self.run("sw_vers"),
                     runner={k: os.environ.get(k) for k in ("RUNNER_OS", "RUNNER_ARCH", "ImageOS", "ImageVersion", "GITHUB_RUN_ID", "GITHUB_RUN_ATTEMPT")})
     def save(self, data):
@@ -76,13 +91,16 @@ def witness(text, name=None):
         require(summaries[0].startswith("ok. 1 passed;") and text.splitlines().count(f"test {name} ... ok") == 1, "exact witness not executed")
     require("SKIPPED" not in text, "network witness skipped")
 
-def archive(e, directory, expected=None):
-    tar = Path(directory).resolve() / ARTIFACT
+def archive(e, directory, version, expected=None):
+    artifact = artifact_name(version)
+    if expected:
+        require(expected["version"] == version and expected["artifact"] == artifact, "original receipt version/filename")
+    tar = Path(directory).resolve() / artifact
     sha = digest(tar)
     checksum = Path(str(tar) + ".sha256")
-    require(checksum.read_text() == f"{sha}  {ARTIFACT}\n", "checksum record/filename")
+    require(checksum.read_text() == f"{sha}  {artifact}\n", "checksum record/filename")
     if expected:
-        require(expected["artifact"] == ARTIFACT and expected["sha256"] == sha, "original receipt archive hash")
+        require(expected["sha256"] == sha, "original receipt archive hash")
     e.run("shasum", "-a", "256", "-c", checksum.name, cwd=tar.parent)
     with tarfile.open(tar) as opened:
         members = opened.getmembers()
@@ -90,7 +108,14 @@ def archive(e, directory, expected=None):
         binary_sha = hashlib.sha256(opened.extractfile(members[0]).read()).hexdigest()
     if expected:
         require(expected["binary_sha256"] == binary_sha, "original receipt binary hash")
-    return tar, dict(artifact=ARTIFACT, sha256=sha, binary_sha256=binary_sha)
+    return tar, dict(artifact=artifact, sha256=sha, binary_sha256=binary_sha)
+
+def cli_version(e, binary, data, env=None):
+    version = e.run(str(binary), "--version", env=env)
+    metadata = re.fullmatch(r"lightr ([0-9]+\.[0-9]+\.[0-9]+) \(([0-9a-f]{7,40}), ([0-9]{4}-[0-9]{2}-[0-9]{2})\)", version)
+    require(metadata and metadata[1] == data["version"] and data["candidate_sha"].startswith(metadata[2]), "version/candidate metadata mismatch")
+    date.fromisoformat(metadata[3])
+    data.update(binary_version=version, build_date_utc=metadata[3])
 
 def inspect(e, binary):
     require("Mach-O 64-bit executable arm64" in e.run("file", str(binary)), "Mach-O arm64 required")
@@ -120,15 +145,16 @@ def build():
         witness(e.run(*argv, "--", name, "--exact", "--nocapture"), name)
         data["witnesses"].append(dict(name=name, outcome="passed"))
     e.run("bash", "packaging/release.sh")
-    tar, hashes = archive(e, "packaging/dist")
-    data.update(hashes, build="lightr-cli --locked --release --features vz")
+    tar, hashes = archive(e, "packaging/dist", data["version"])
+    data.update(hashes, build="lightr --locked --release --features vz")
     with tempfile.TemporaryDirectory() as extracted:
         e.run("tar", "-xzf", str(tar), "-C", extracted)
         inspect(e, Path(extracted) / "lightr")
+        cli_version(e, Path(extracted) / "lightr", data)
         require(digest(Path(extracted) / "lightr") == hashes["binary_sha256"], "inspection changed binary")
     sha = e.save(data)
     with open(os.environ["GITHUB_OUTPUT"], "a") as output:
-        output.write(f"receipt-sha256={sha}\n")
+        output.write(f"receipt-sha256={sha}\nartifact-path=packaging/dist/{hashes['artifact']}\nchecksum-path=packaging/dist/{hashes['artifact']}.sha256\n")
 
 def install():
     e = Evidence("macos-install")
@@ -138,7 +164,7 @@ def install():
     require(digest(receipt) == os.environ["RECEIPT_SHA256"], "original receipt hash")
     original = json.loads(receipt.read_text())
     require(original["candidate_sha"] == original["workflow_sha"] == data["candidate_sha"], "receipt candidate identity")
-    tar, hashes = archive(e, "candidate/packaging/dist", original)
+    tar, hashes = archive(e, "candidate/packaging/dist", data["version"], original)
     home = Path(tempfile.mkdtemp(dir=e.path)).resolve()
     try:
         env = dict(os.environ, HOME=str(home), LIGHTR_HOME=str(home / ".lightr"))
@@ -150,11 +176,8 @@ def install():
         destination.parent.mkdir(parents=True)
         e.run("install", "-m", "755", str(home / "lightr"), str(destination))
         require(digest(destination) == hashes["binary_sha256"], "installed binary hash")
-        version = e.run(str(destination), "--version", env=env)
-        metadata = re.fullmatch(r"lightr ([0-9]+\.[0-9]+\.[0-9]+) \(([0-9a-f]{7,40}), ([0-9]{4}-[0-9]{2}-[0-9]{2})\)", version)
-        require(metadata and metadata[1] == data["version"] and data["candidate_sha"].startswith(metadata[2]), "version/candidate metadata mismatch")
-        date.fromisoformat(metadata[3])
-        data.update(binary_version=version, build_date_utc=metadata[3])
+        cli_version(e, destination, data, env=env)
+        require(all(data[key] == original[key] for key in ("binary_version", "build_date_utc")), "original receipt CLI metadata")
         require(e.run(str(destination), "--help", env=env), "empty help smoke output")
     finally:
         e.run("rm", "-rf", str(home))
