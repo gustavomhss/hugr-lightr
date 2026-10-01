@@ -15,7 +15,7 @@ EXPECTED = {
             ("release_id", "Immutable draft release ID"),
             ("candidate_sha", "Immutable lowercase 40-character product commit"),
             ("release_tag", "Existing release tag bound to the product commit"))}}},
-    "permissions": {"contents": "read", "actions": "read"},
+    "permissions": {"contents": "write", "actions": "read"},
     "jobs": {"clean-install": {
         "environment": "G-PUBLISH", "runs-on": "${{ matrix.runner }}", "timeout-minutes": "15",
         "strategy": {"fail-fast": "false", "matrix": {"include": [
@@ -128,6 +128,17 @@ class Tests(unittest.TestCase):
     def test_duplicate_keys_rejected(self):
         with self.assertRaises(ValueError):
             yaml.load(WORKFLOW.read_text() + "\npermissions: {}\n", Loader=ClosedLoader)
+
+    def test_known_draft_visibility_failure_contents_read_rejected(self):
+        # Run 36877718655 failed both draft GETs with this former permission.
+        doc = yaml.load(WORKFLOW.read_text(), Loader=ClosedLoader)
+        contract(doc)
+        doc["permissions"]["contents"] = "read"
+        with self.assertRaises(ValueError) as failure:
+            contract(doc)
+        self.assertEqual(str(failure.exception), "workflow.permissions.contents: exact value mismatch")
+        doc["permissions"]["contents"] = "write"
+        contract(doc)
 
     def test_fail_fast_removal_and_value_flip_rejected(self):
         doc = yaml.load(WORKFLOW.read_text(), Loader=ClosedLoader)
