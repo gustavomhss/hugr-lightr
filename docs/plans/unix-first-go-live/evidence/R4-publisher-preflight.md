@@ -1,7 +1,7 @@
 # R4 Publisher Preflight: Non-Upload Evidence
 
 **Recorded:** 2026-10-01. **Status:** Identity/direct ownership and
-`trusted-publishing` scope proven; **publish-new/update UNVERIFIED; R4 pending**.
+`trusted-publishing` management scope proven; **regular-token publish-new/update UNVERIFIED; R4 pending**.
 Authority: [prepared-source freeze][freeze] and [preparation permission][prep].
 Source: `47f02795d0884956c4755254b5f6fc377a5938b5`, version `0.1.1`, Rust `1.96.0`.
 Eleven intended root packages are prepared `publish = true`; this is not upload permission.
@@ -26,11 +26,18 @@ No upload or owner/configuration changes were performed by these probes.
 
 ## Reach and remaining gates
 
+**Later auth-path evidence:** [Trusted Publishing receipt](R4-trusted-publishing.md),
+accepted under [#187/comment5938363943](https://github.com/gmhelmold/hugr-lightr/issues/187#issuecomment-5938363943), records nine unchanged matching bindings and actual OIDC exchange/revoke in run `36908078128`.
+Existing-nine version-publish auth-path readiness is PASS; this historical GET
+preflight did not prove it. Regular-auth bootstrap proof remains required for
+absent `hugr-lightr-cri-backend` and `hugr-lightr`, at publish positions 9 and 11.
+No exclusive token allowlist, upload success, or publication authorization follows.
+
 Pinned upstream [authentication][auth] and [configs controller][controller] explain
 scope checks, legacy-token rejection on user-ID GET, matching authenticated user,
 and non-deleted direct User ownership on crate GET. These are explanatory source
 citations, **not an assertion that production deployment matches this commit**.
-Only `trusted-publishing` scope was exercised; read probes do not prove
+Only `trusted-publishing` management scope was exercised by these GET probes; they do not prove
 `publish-new` or `publish-update`, name clearance/reservation, exact-version
 availability, upload validation, or publication success for all eleven packages.
 RC receipts qualify frozen `47f0279` under the VZ-only policy; [actual public native qualification](R3-public-release-assets.md) now PASS on both targets under [owner acceptance](https://github.com/gmhelmold/hugr-lightr/issues/187#issuecomment-5934996357).

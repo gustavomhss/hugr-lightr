@@ -56,9 +56,9 @@ performance claim follows. See the separate [policy acceptance receipt](plans/un
 The documentation commit is not qualified. Any changed publication source needs
 a new final R0 and rerun receipts; recorded acceptance does not qualify it.
 The VZ-only waiver remains limited to 0.1.1. Actual public `release.yml` outputs,
-publisher write-scope proof, and explicit publication actions remain required.
+authenticated publication readiness, and explicit publication actions remain required.
 Historical `ca88415` acceptance does not qualify this source. [GET preflight](plans/unix-first-go-live/evidence/R4-publisher-preflight.md)
-proved identity/direct ownership and trusted-publishing scope only; publish-new/update remain unverified.
+proved identity/direct ownership and management scope only. [Live OIDC proof](plans/unix-first-go-live/evidence/R4-trusted-publishing.md) now establishes existing-nine version-publish auth-path readiness; regular-token publish-new/update remain unverified.
 
 ## Signing Policy
 
@@ -114,15 +114,36 @@ release packages. Do not use `cargo publish --workspace`.
 
 ## Owner Publish Order
 
+### Trusted Publishing Scope and Bootstrap
+
+`publish-crates.yml` at verifier `db0846d295cae27fef5f90c10b6441054c6fffd2`
+is **auth-only, with no publication mode**. [Accepted live proof](plans/unix-first-go-live/evidence/R4-trusted-publishing.md)
+binds frozen product `47f0279`/`v0.1.1`: nine matching configurations, actual
+OIDC exchange, helper revocation HTTP 204, and successful official post-cleanup.
+Readbacks are external network GETs, not workflow checks or disconnected reads.
+Opaque token does not prove an exclusive nine-crate allowlist or successful uploads.
+
+`hugr-lightr-cri-backend` and `hugr-lightr` are absent: Trusted Publishing cannot
+perform their first publication. Obtain regular-auth bootstrap credential evidence
+(`publish-new`, exact-name scope and full publish authentication), immediate
+name/version checks, and explicit first-upload authorization. Preserve the eleven
+commands above: backend position 9, build 10, CLI 11; not nine-existing-first.
+Only after each new crate's first regular-auth publication configure/read back its binding.
+Actual publisher workflow requires a separate reviewed change, CI/cold review,
+and explicit owner execution approval before first upload. Keep qualified source,
+packages and producer fixed; changing them restarts R0 and rerun receipts.
+
+### Qualified Draft and Remaining Owner Actions
+
 **0.1.1 order exception:** [owner choice "Autorizar tag e draft"](https://github.com/gmhelmold/hugr-lightr/issues/187#issuecomment-5929619780) authorizes annotated `v0.1.1` at `47f02795d0884956c4755254b5f6fc377a5938b5`, `release.yml` dispatch, explicit `G-PUBLISH` reviews, uploads and DRAFT qualification before publish-new/update scope proof. This advances binary qualification only; crate publication/promotion remain unauthorized. Default rights-before-tag order otherwise remains.
-Producer completed and immutable-ID DRAFT created; [actual public native receipt](plans/unix-first-go-live/evidence/R3-public-release-assets.md) records PASS on both targets under [owner acceptance](https://github.com/gmhelmold/hugr-lightr/issues/187#issuecomment-5934996357). Publisher write scopes and crate publication/promotion authorization remain pending.
+Producer completed and immutable-ID DRAFT created; [actual public native receipt](plans/unix-first-go-live/evidence/R3-public-release-assets.md) records PASS on both targets under [owner acceptance](https://github.com/gmhelmold/hugr-lightr/issues/187#issuecomment-5934996357). Regular-auth bootstrap proof, exact-name/version checks, and crate publication/promotion authorization remain pending; nine-crate OIDC auth-path readiness passed.
 Independent consumer/workflow `b0aabc450eab83ee844c29273b8203e5fd84365f` verified frozen producer `47f0279`; it neither qualifies its own source nor changes the product. Changing selected publication source/producer workflow restarts R0 and reruns.
 
-1. Owner authorized crates + binaries preparation; #278 and the current R0 freeze record it. GET identity/ownership checks passed; confirm publishing write scopes for every intended crate and exact registry versions before any irreversible tag action. These execution permissions remain pending.
+1. Owner authorized crates + binaries preparation; #278 and current R0 record it. GET identity/ownership and nine-crate OIDC readiness passed; confirm regular-auth bootstrap rights for the two absent crates and exact names/versions for all eleven. Tag/DRAFT exception above is already executed; crate uploads/promotion remain unauthorized.
 2. Intended packages are already `publish = true` in frozen `47f0279`. Any change to selected publication source, manifests or producer workflow invalidates qualification: freeze changed source anew and rerun Linux/hosted receipts. Only VZ is waived for 0.1.1; historical `ca88415` evidence does not qualify changed source. Do not change manifests after qualification or retag the same version.
 3. Only after final qualification and explicit owner execution authorization, create/push annotated `v0.1.1` (signed if configured) at the final immutable SHA. Manually dispatch `release.yml` from that workflow revision with that exact SHA/tag; required `G-PUBLISH` reviews gate uploads and creation of a DRAFT, not promotion. Tag alone builds, uploads, and releases nothing.
 4. Independently qualify ACTUAL public-workflow outputs: verify original individual `.sha256` files, artifact/binary identities, architecture/features, and macOS `codesign --verify --strict` plus Boolean-true `com.apple.security.virtualization` and truthful signing status. Complete fresh Linux and macOS checksum/install/version/help/hash/cleanup receipts using those exact output bytes. Cached RC outputs do not inherit or substitute for this qualification.
-5. Only after that qualification and renewed exact-version/authenticated-rights checks, obtain explicit owner authorization for irreversible serial crate publication in the listed dependency order. Wait for each dependency tier to index; do not change manifests after final qualification or tag.
+5. Only after qualification, renewed exact-name/version/authenticated-rights checks, and reviewed actual publisher workflow, obtain explicit owner authorization for irreversible serial publication in listed order, including regular-auth first publications at positions 9 and 11. Wait for dependency indexing; configure new bindings only after bootstrap. Do not change qualified manifests or tag.
 6. Fill installer release base/version and formula URLs/SHA-256 values only from exact verified release assets. Mac URL must match signed or `-unsigned` receipt status; attach receipts and retain URLs.
 7. Human owner reviews the verified draft scope and explicitly authorizes promotion through `G-PUBLISH`. Neither waiver nor self-review permission authorizes any execution step above.
 
