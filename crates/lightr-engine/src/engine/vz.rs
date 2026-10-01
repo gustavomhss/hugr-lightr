@@ -790,14 +790,10 @@ mod tests {
     }
 
     #[test]
-    fn suspension_token_stays_private_and_owner_resume_accepts_no_token() {
+    fn suspension_artifact_keeps_token_and_rootfs_private() {
         let artifact = include_str!("mod.rs");
-        let owner = include_str!("../../../lightr-run/src/run/suspend.rs");
         assert!(artifact.contains("pub(crate) release_token: String"));
         assert!(artifact.contains("pub(crate) rootfs: PathBuf"));
-        assert!(!owner.contains("pub fn artifact("));
-        assert!(owner.contains("pub fn resume(&self) -> Result<ResumedInstance>"));
-        assert!(owner.contains("self.engine.resume(&self.artifact)"));
     }
 
     #[test]

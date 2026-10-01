@@ -82,3 +82,15 @@ impl Drop for SuspensionOwner {
         let _ = std::fs::remove_dir_all(&self.artifact_dir);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn suspension_owner_keeps_artifact_private_and_resume_accepts_no_token() {
+        let source = include_str!("suspend.rs");
+        let owner = source.split("#[cfg(test)]").next().unwrap();
+        assert!(!owner.contains("pub fn artifact("));
+        assert!(owner.contains("pub fn resume(&self) -> Result<ResumedInstance>"));
+        assert!(owner.contains("self.engine.resume(&self.artifact)"));
+    }
+}

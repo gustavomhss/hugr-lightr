@@ -308,21 +308,15 @@ fn validate_inventory(inventory: &serde_json::Value) -> Result<(), String> {
 
 #[test]
 fn inventory_matches_closed_lowering_map_and_resolvable_witnesses() {
-    let inventory: serde_json::Value = serde_json::from_str(include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../benchmarks/s3/security/inventory.json"
-    )))
-    .unwrap();
+    let inventory: serde_json::Value =
+        serde_json::from_str(include_str!("policy_security_inventory.json")).unwrap();
     validate_inventory(&inventory).unwrap();
 }
 
 #[test]
 fn inventory_validator_rejects_mapping_and_witness_mutations() {
-    let mut inventory: serde_json::Value = serde_json::from_str(include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../benchmarks/s3/security/inventory.json"
-    )))
-    .unwrap();
+    let mut inventory: serde_json::Value =
+        serde_json::from_str(include_str!("policy_security_inventory.json")).unwrap();
     inventory["controls"][0]["cli"] = serde_json::Value::String("--mutated".into());
     assert!(validate_inventory(&inventory).is_err());
     inventory["controls"][0]["cli"] = serde_json::Value::String("--user".into());
