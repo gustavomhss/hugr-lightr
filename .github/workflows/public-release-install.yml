@@ -1,0 +1,64 @@
+name: Public release fresh-install proof
+on:
+  workflow_dispatch:
+    inputs:
+      producer_run_id:
+        description: Immutable public release producer run ID
+        required: true
+        type: string
+      release_id:
+        description: Immutable draft release ID
+        required: true
+        type: string
+      candidate_sha:
+        description: Immutable lowercase 40-character product commit
+        required: true
+        type: string
+      release_tag:
+        description: Existing release tag bound to the product commit
+        required: true
+        type: string
+# GET release/asset permissions: Contents read; Actions read for producer proof.
+# https://docs.github.com/en/rest/authentication/permissions-required-for-fine-grained-personal-access-tokens#repository-permissions-for-contents
+# Draft visibility with github.token remains an integration check; do not widen silently.
+permissions:
+  contents: read
+  actions: read
+jobs:
+  clean-install:
+    environment: G-PUBLISH
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux-x86_64
+            runner: ubuntu-latest
+          - target: darwin-arm64
+            runner: macos-14
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      # GitHub supplies GITHUB_REPOSITORY/SHA/RUN_ID/RUN_ATTEMPT and RUNNER_OS/ARCH.
+      # These identify the verifier run, never the selected producer or product.
+      - name: Verify read-only transport and fresh native install
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PUBLIC_RELEASE_RUN_ID: ${{ inputs.producer_run_id }}
+          PUBLIC_RELEASE_ID: ${{ inputs.release_id }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          PUBLIC_RELEASE_TARGET: ${{ matrix.target }}
+          VERIFIER_SHA: ${{ github.sha }}
+        run: python3 scripts/ci/public_release_install.py
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: ${{ always() }}
+        with:
+          name: public-release-install-${{ matrix.target }}-${{ inputs.producer_run_id }}
+          path: public-release-install/
+          if-no-files-found: error
+          retention-days: 30
