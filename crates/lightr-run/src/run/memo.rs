@@ -20,11 +20,10 @@
 //!
 //! ## Per-domain v2 rule (LEAD ARBITRATION)
 //!
-//! The domain tag is bumped PER-KEY-DOMAIN, and ONLY when that key's input
-//! format changes. The RUN key STAYS `lightr/run/v1` (env format unchanged by
-//! the freeze-gate). The BUILD key bumps to `lightr/build/v2` at WP-DF-13 (when
-//! interp text + workdir/user/entrypoint enter it) — see build/memo.rs. Each
-//! bump is a documented one-time Action-Cache invalidation.
+//! The global RUN domain stays `lightr/run/v1`. ADR-0023 versions only the
+//! non-empty explicit-env contribution to reject 0.1.1 results produced without
+//! applying that env; empty explicit env preserves its key. The BUILD key bumps
+//! to `lightr/build/v2` at WP-DF-13 — see build/memo.rs.
 
 use lightr_core::{Digest, LightrError, Result, OUTPUT_CAP_BYTES};
 use lightr_index::{scan, Index};
@@ -41,9 +40,10 @@ use super::types::{RunOutcome, RunSpec};
 /// key — the ONLY env channel in the key (the discovery `env` stays UNKEYED;
 /// `env_keys` is a separate var-NAME mechanism). Pairs are sorted so CLI order
 /// never changes the key, but a different KEY/VALUE always does (no false hit).
-/// A `\x03env_explicit\0` domain tag prefixes the block so it can't collide
+/// A `\x03env_explicit/v2\0` domain tag prefixes the block so it can't collide
 /// with the `env_keys` folds above; an EMPTY slice writes nothing, so a run
 /// with no `-e`/`--env-file` keys byte-identically to before (behavior-preserved).
+/// ADR-0023 rejects cached results from the former, unapplied-env execution.
 pub(super) fn contribute_env_explicit(
     hasher: &mut blake3::Hasher,
     env_explicit: &[(String, String)],
@@ -53,7 +53,7 @@ pub(super) fn contribute_env_explicit(
     }
     let mut sorted = env_explicit.to_vec();
     sorted.sort();
-    hasher.update(b"\x03env_explicit\0");
+    hasher.update(b"\x03env_explicit/v2\0");
     for (k, v) in &sorted {
         hasher.update(k.as_bytes());
         hasher.update(b"=");
@@ -90,7 +90,7 @@ pub(super) fn validate_mount_target(t: &str) -> Result<()> {
 //   args: for each in spec.command: update(len.to_le_bytes() + arg bytes)
 //   env_keys (sorted): present → update(key + b"=" + value + b"\0");
 //     absent → update(key + b"\x01")
-//   env_explicit (WP-RC-1): contribute_env_explicit (sorted, \x03-tagged block)
+//   env_explicit (ADR-0023): contribute_env_explicit (sorted, versioned block)
 //   triple: update(OS + "-" + ARCH)
 //   mounts (in order): validate target, update(ref_name + [0x02] + root digest)
 //   key = finalize
@@ -303,8 +303,10 @@ pub fn run_memoized_with(
     let run_cwd = super::spawn::resolve_workdir(&spec.cwd, spec.workdir.as_deref())?;
     cmd.args(&argv[1..]).current_dir(&run_cwd);
     super::spawn::apply_user(&mut cmd, spec.user.as_deref())?; // WP-RC-USER (-u; None ⇒ no-op)
-    super::apply_cfg::apply_run_config_spec(spec, &mut cmd); // RC-SEAM-FREEZE (no-op)
-                                                             // F-203: apply resource caps (RLIMIT_AS/DATA via pre_exec); no-op when unlimited.
+    super::apply_cfg::apply_run_config_spec(spec, &mut cmd);
+    // Explicit user env wins over inherited/generated values; empty is a no-op.
+    cmd.envs(spec.env_explicit.iter().cloned());
+    // F-203: apply resource caps (RLIMIT_AS/DATA via pre_exec); no-op when unlimited.
     crate::limits::apply_native(&mut cmd, limits)?;
     // `--ulimit`: per-process setrlimit caps via a pre_exec hook (memo-path
     // honest-boundary law — enforceable natively, so applied not dropped). Empty ⇒ no-op.

@@ -299,6 +299,6 @@ fn discovery_env_stays_unkeyed_vs_explicit() {
         "env_explicit is keyed: it must change the key"
     );
 
-    // The env_explicit fold uses a `\x03env_explicit\0` domain tag, so it can
+    // The env_explicit fold uses a `\x03env_explicit/v2\0` domain tag, so it can
     // never be confused with the env_keys (`=`/`\x01`) fold — distinct channels.
 }

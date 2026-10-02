@@ -68,6 +68,15 @@ The go-live hardening wave merged gate-green: **411 tests, 0 failures**, clippy
 | F-109 | CLI overhead <budget | ✅ | bench B1 (7 ms) |
 
 ## Engines (R1 native / R2 tiers)
+
+Foreground native explicit-env correction ([ADR-0023](../adr/0023-native-explicit-env-cache.md)):
+`-e` / `--env-file` values reach the child through `RunSpec.env_explicit`.
+Only non-empty explicit-env RUN contributions use the new subdomain; legacy
+incorrect results become MISS, while no-explicit-env keys retain compatibility.
+Regression witnesses: `run::tests::memo_env::explicit_env_reaches_child_and_memoizes`
+and `run::tests::memo_env::legacy_explicit_env_cache_is_not_replayed` (real children,
+execution counters and independently reconstructed 0.1.1 cache records).
+
 | F | Feature | Status | Evidence |
 |---|---|---|---|
 | F-201 | native engine | ✅ | A19; lightr-engine unit |
