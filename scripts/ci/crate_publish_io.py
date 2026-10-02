@@ -17,6 +17,7 @@ from trusted_publishing_readiness import ReadinessError, require
 
 ORIGIN = "https://crates.io/api/v1/crates/"
 LIMIT = 1024 * 1024
+PACKAGE_VERSIONS = ("0.1.1", "0.1.2")
 TOKEN_KEYS = ("TP_TOKEN", "BOOTSTRAP_TOKEN", "GH_TOKEN", "GITHUB_TOKEN",
               "GH_RUNTIME_TOKEN", "ACTIONS_RUNTIME_TOKEN", "ACTIONS_ID_TOKEN_REQUEST_TOKEN")
 
@@ -57,10 +58,15 @@ def child_env(output, env, token_key=None):
     return child
 
 
-def archive_path(output, name, publish=False):
+def require_package_version(version):
+    require(isinstance(version, str) and version in PACKAGE_VERSIONS, "package version forbidden")
+
+
+def archive_path(output, name, publish=False, *, version="0.1.1"):
+    require_package_version(version)
     require(re.fullmatch(r"[a-z][a-z0-9-]{0,63}", name), "crate archive name forbidden")
     directory = "build/package/tmp-crate" if publish else "target/package"
-    return output / directory / (name + "-0.1.1.crate")
+    return output / directory / (name + "-" + version + ".crate")
 
 
 def package_sha(path):
@@ -68,10 +74,12 @@ def package_sha(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def verify_archive(path, name, source):
+def verify_archive(path, name, source, *, version="0.1.1"):
+    expected = archive_path(path.parent, name, version=version).name
+    require(path.name == expected, "package archive name/version mismatch")
     with tarfile.open(path, "r:gz") as archive:
         members, seen = archive.getmembers(), set()
-        root = name + "-0.1.1"
+        root = name + "-" + version
         for member in members:
             parts = member.name.split("/")
             require(parts[0] == root and all(p and p not in (".", "..") for p in parts) and
@@ -88,14 +96,15 @@ def verify_archive(path, name, source):
         vcs = json.loads(read(".cargo_vcs_info.json"))["git"]
         require(vcs.get("sha1") == source and vcs.get("dirty", False) is False, "package git source/dirty mismatch")
         manifest = tomllib.loads(read("Cargo.toml"))["package"]
-        require([manifest.get(k) for k in ("name", "version")] == [name, "0.1.1"], "normalized package name/version mismatch")
+        require([manifest.get(k) for k in ("name", "version")] == [name, version], "normalized package name/version mismatch")
         require(manifest.get("license") == "Apache-2.0", "package license mismatch")
 
 
-def cargo(output, product, name, phase, env, token_key=None, dry_run=False, offline=False):
+def cargo(output, product, name, phase, env, token_key=None, dry_run=False, offline=False, *, version="0.1.1"):
+    require_package_version(version)
     require(phase in ("package", "publish"), "Cargo phase forbidden")
     require(token_key is None or (phase == "publish" and not dry_run), "package/dry-run must be credential-free")
-    archive_path(output, name)
+    archive_path(output, name, version=version)
     argv = ["cargo", "+1.96.0", phase, "--locked", "--registry", "crates-io", "--manifest-path", str(product / "Cargo.toml"), "-p", name]
     if dry_run:
         require(phase == "publish" and token_key is None, "credential-free publish dry-run required")
@@ -121,7 +130,7 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 def registry(name, version=None):
-    require(re.fullmatch(r"[a-z][a-z0-9-]{0,63}", name) and version in (None, "0.1.0", "0.1.1"), "registry query forbidden")
+    require(re.fullmatch(r"[a-z][a-z0-9-]{0,63}", name) and version in (None, "0.1.0", "0.1.1", "0.1.2"), "registry query forbidden")
     url = ORIGIN + name + ("/" + version if version else "")
     try:
         opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
@@ -155,10 +164,11 @@ def registry(name, version=None):
         raise ReadinessError("registry network/JSON failure") from None
 
 
-def observe(row, poll=False):
+def observe(row, poll=False, *, version="0.1.1"):
+    require_package_version(version)
     deadline = time.monotonic() + (120 if poll else 0)
     while True:
-        row["remote"] = registry(row["name"], "0.1.1")
+        row["remote"] = registry(row["name"], version)
         if row["remote"]["state"] == "existing" or not poll or time.monotonic() >= deadline:
             break
         time.sleep(min(5, max(0, deadline - time.monotonic())))
