@@ -13,31 +13,10 @@ import urllib.error
 import urllib.request
 import yaml
 import trusted_publishing_readiness as t
+from test_crate_publisher_workflow import CONTRACT, load_workflow, validate_workflow
 
 ROOT = Path(__file__).resolve().parents[2]
 TOKEN = "SYNTH-TP-do-not-log"
-EXPR = lambda name: "${{ " + name + " }}"
-ENV = {"CANDIDATE_SHA": EXPR("inputs.candidate_sha"), "RELEASE_TAG": EXPR("inputs.release_tag"), "VERIFIER_SHA": EXPR("github.sha")}
-CONTRACT = {
-    "name": "Trusted Publishing auth-only readiness",
-    "on": {"workflow_dispatch": {"inputs": {
-        "candidate_sha": {"description": "Frozen lowercase 40-character product SHA", "required": True, "type": "string"},
-        "release_tag": {"description": "Existing annotated product tag", "required": True, "type": "string"}}}},
-    "permissions": {"contents": "read", "id-token": "write"},
-    "jobs": {"readiness": {"runs-on": "ubuntu-latest", "environment": "G-PUBLISH", "timeout-minutes": 10, "steps": [
-        {"uses": "actions/checkout@11d5960a326750d5838078e36cf38b85af677262",
-         "with": {"ref": EXPR("github.sha"), "fetch-depth": 0, "persist-credentials": False}},
-        {"name": "Verify frozen source and verifier", "env": ENV, "run": "python3 scripts/ci/trusted_publishing_readiness.py preflight"},
-        {"name": "Exchange OIDC for temporary token", "id": "auth", "uses": "rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18"},
-        {"name": "Revoke token and record auth-only proof", "env": dict(ENV, TP_TOKEN=EXPR("steps.auth.outputs.token")),
-         "run": "python3 scripts/ci/trusted_publishing_readiness.py revoke"},
-        {"uses": "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02", "if": EXPR("always()"),
-         "with": {"name": "trusted-publishing-readiness", "path": "trusted-publishing-readiness/", "if-no-files-found": "error", "retention-days": 30}}
-    ]}}}
-
-def validate_workflow(document):
-    if json.dumps(document, sort_keys=True) != json.dumps(CONTRACT, sort_keys=True):
-        raise ValueError("auth-only closed workflow contract mismatch")
 
 class Tests(unittest.TestCase):
     def setUp(self):
@@ -165,9 +144,10 @@ class Tests(unittest.TestCase):
                 self.assertFalse((t.OUTPUT / "receipt.json").exists())
 
     def test_workflow_closed_contract_and_all_removals(self):
-        document = yaml.safe_load((ROOT / ".github/workflows/publish-crates.yml").read_text())
-        document["on"] = document.pop(True)  # PyYAML YAML 1.1 parses unquoted `on` as True.
+        document = load_workflow((ROOT / ".github/workflows/publish-crates.yml").read_text())
         validate_workflow(document)
+        self.assertEqual(document["on"]["workflow_dispatch"]["inputs"]["mode"]["default"], "auth-only")
+        self.assertEqual(set(document["jobs"]), {"readiness", "publish"})
         def mutations(value):
             if isinstance(value, (dict, list)):
                 for key in list(value) if isinstance(value, dict) else range(len(value)):
