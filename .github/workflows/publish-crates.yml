@@ -3,15 +3,18 @@ name: Trusted Publishing auth-only readiness
 # Lead must read back configs offline before/after; management token never enters CI.
 # Owner upload authority: issues/187#issuecomment-5939211059 (eleven 0.1.1 crates).
 # Publish mode requires crate_publisher.py to land first. Never rerun a failed batch.
+# Continuation authority: issues/187#issuecomment-5944066332; one six-crate continuation.
+# Run 36951118620: five succeeded; HTTP/2 failure before views upload. Never rerun
+# a failed continuation. Continuation helper changes must land before this workflow.
 on:
   workflow_dispatch:
     inputs:
       mode:
-        description: Auth-only proof or owner-authorized eleven-crate publication
+        description: Auth-only proof, initial publication, or authorized six-crate continuation
         required: true
         type: choice
         default: auth-only
-        options: [auth-only, publish]
+        options: [auth-only, publish, publish-remaining]
       candidate_sha:
         description: Frozen lowercase 40-character product SHA
         required: true
@@ -21,7 +24,7 @@ on:
         required: true
         type: string
       confirmation:
-        description: publish-0.1.1 required for publish; validated before token mint
+        description: publish-0.1.1 for publish; continue-0.1.1-after-36951118620 for publish-remaining; validated before token mint
         required: false
         type: string
         default: ''
@@ -64,7 +67,7 @@ jobs:
           if-no-files-found: error
           retention-days: 30
   publish:
-    if: ${{ inputs.mode == 'publish' && github.run_attempt == 1 }}
+    if: ${{ (inputs.mode == 'publish' || inputs.mode == 'publish-remaining') && github.run_attempt == 1 }}
     runs-on: ubuntu-latest
     environment: G-PUBLISH
     timeout-minutes: 25
@@ -87,6 +90,7 @@ jobs:
           RELEASE_TAG: ${{ inputs.release_tag }}
           VERIFIER_SHA: ${{ github.sha }}
           UPLOAD_AUTHORIZATION: ${{ inputs.confirmation }}
+          CONTINUATION: ${{ inputs.mode == 'publish-remaining' && 'remaining-after-36951118620' || '' }}
           BOOTSTRAP_TOKEN: ${{ secrets.CARGO_BOOTSTRAP_TOKEN }}
         run: python3 scripts/ci/crate_publisher.py preflight
       - name: Exchange OIDC for temporary token
@@ -98,6 +102,7 @@ jobs:
           RELEASE_TAG: ${{ inputs.release_tag }}
           VERIFIER_SHA: ${{ github.sha }}
           UPLOAD_AUTHORIZATION: ${{ inputs.confirmation }}
+          CONTINUATION: ${{ inputs.mode == 'publish-remaining' && 'remaining-after-36951118620' || '' }}
           BOOTSTRAP_TOKEN: ${{ secrets.CARGO_BOOTSTRAP_TOKEN }}
           TP_TOKEN: ${{ steps.auth.outputs.token }}
         run: python3 scripts/ci/crate_publisher.py publish

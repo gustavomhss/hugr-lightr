@@ -48,6 +48,7 @@ def child_env(output, env, token_key=None):
     child = dict(PATH=env["PATH"], RUSTUP_HOME=env.get("RUSTUP_HOME") or str(Path(env["HOME"]) / ".rustup"),
                  HOME=str(output / "home"), CARGO_HOME=str(output / "cargo"),
                  CARGO_TARGET_DIR=str(output / "target"), CARGO_BUILD_BUILD_DIR=str(output / "build"), LC_ALL="C",
+                 CARGO_HTTP_MULTIPLEXING="false",
                  CARGO_REGISTRY_GLOBAL_CREDENTIAL_PROVIDERS="cargo:token", CARGO_REGISTRY_CREDENTIAL_PROVIDER="cargo:token")
     if token_key is not None:
         require(token_key in ("TP_TOKEN", "BOOTSTRAP_TOKEN"), "Cargo credential selector forbidden")

@@ -14,7 +14,8 @@ ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW = ROOT / ".github/workflows/publish-crates.yml"
 EXPR = lambda name: "${{ " + name + " }}"
 ENV = {"CANDIDATE_SHA": EXPR("inputs.candidate_sha"), "RELEASE_TAG": EXPR("inputs.release_tag"), "VERIFIER_SHA": EXPR("github.sha")}
-PUBLISH_ENV = dict(ENV, UPLOAD_AUTHORIZATION=EXPR("inputs.confirmation"), BOOTSTRAP_TOKEN=EXPR("secrets.CARGO_BOOTSTRAP_TOKEN"))
+CONTINUATION = EXPR("inputs.mode == 'publish-remaining' && 'remaining-after-36951118620' || ''")
+PUBLISH_ENV = dict(ENV, UPLOAD_AUTHORIZATION=EXPR("inputs.confirmation"), BOOTSTRAP_TOKEN=EXPR("secrets.CARGO_BOOTSTRAP_TOKEN"), CONTINUATION=CONTINUATION)
 CHECKOUT = {"uses": "actions/checkout@11d5960a326750d5838078e36cf38b85af677262",
             "with": {"ref": EXPR("github.sha"), "fetch-depth": 0, "persist-credentials": False}}
 AUTH = {"name": "Exchange OIDC for temporary token", "id": "auth", "uses": "rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18"}
@@ -25,11 +26,11 @@ def artifact(name, path):
 CONTRACT = {
     "name": "Trusted Publishing auth-only readiness",
     "on": {"workflow_dispatch": {"inputs": {
-        "mode": {"description": "Auth-only proof or owner-authorized eleven-crate publication", "required": True,
-                 "type": "choice", "default": "auth-only", "options": ["auth-only", "publish"]},
+        "mode": {"description": "Auth-only proof, initial publication, or authorized six-crate continuation", "required": True,
+                 "type": "choice", "default": "auth-only", "options": ["auth-only", "publish", "publish-remaining"]},
         "candidate_sha": {"description": "Frozen lowercase 40-character product SHA", "required": True, "type": "string"},
         "release_tag": {"description": "Existing annotated product tag", "required": True, "type": "string"},
-        "confirmation": {"description": "publish-0.1.1 required for publish; validated before token mint", "required": False, "type": "string", "default": ""}}}},
+        "confirmation": {"description": "publish-0.1.1 for publish; continue-0.1.1-after-36951118620 for publish-remaining; validated before token mint", "required": False, "type": "string", "default": ""}}}},
     "permissions": {"contents": "read", "id-token": "write"},
     "jobs": {
         "readiness": {"if": EXPR("inputs.mode == 'auth-only'"), "runs-on": "ubuntu-latest", "environment": "G-PUBLISH", "timeout-minutes": 10, "steps": [
@@ -39,7 +40,7 @@ CONTRACT = {
             {"name": "Revoke token and record auth-only proof", "env": dict(ENV, TP_TOKEN=EXPR("steps.auth.outputs.token")),
              "run": "python3 scripts/ci/trusted_publishing_readiness.py revoke"},
             artifact("trusted-publishing-readiness", "trusted-publishing-readiness/")]},
-        "publish": {"if": EXPR("inputs.mode == 'publish' && github.run_attempt == 1"), "runs-on": "ubuntu-latest", "environment": "G-PUBLISH", "timeout-minutes": 25,
+        "publish": {"if": EXPR("(inputs.mode == 'publish' || inputs.mode == 'publish-remaining') && github.run_attempt == 1"), "runs-on": "ubuntu-latest", "environment": "G-PUBLISH", "timeout-minutes": 25,
                     "concurrency": {"group": "publish0.1.1", "cancel-in-progress": False}, "steps": [
             CHECKOUT,
             {"name": "Install pinned Rust before token mint", "uses": "dtolnay/rust-toolchain@ebb3d1676050bfd0971c36c1e215b5751473994d", "with": {"toolchain": "1.96.0"}},
@@ -94,7 +95,22 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(inputs["mode"]["default"], "auth-only")
         self.assertEqual(inputs["confirmation"]["default"], "")
         self.assertEqual(document["jobs"]["readiness"]["if"], EXPR("inputs.mode == 'auth-only'"))
-        self.assertEqual(document["jobs"]["publish"]["if"], EXPR("inputs.mode == 'publish' && github.run_attempt == 1"))
+        self.assertEqual(document["jobs"]["publish"]["if"], EXPR("(inputs.mode == 'publish' || inputs.mode == 'publish-remaining') && github.run_attempt == 1"))
+
+    def test_continuation_selection_mutations(self):
+        original = load_workflow(WORKFLOW.read_text())
+        validate_workflow(original)
+        for index in (2, 4):
+            for key, value in (("CONTINUATION", ""), ("CONTINUATION", "remaining-after-36951118620"),
+                               ("CONTINUATION", CONTINUATION.replace("'publish-remaining'", "'publish'")),
+                               ("CONTINUATION", CONTINUATION.replace("36951118620", "36951118621")),
+                               ("CONTINUATION", EXPR("steps.auth.outputs.token")),
+                               ("CANDIDATE_SHA", "47f02795d0884956c4755254b5f6fc377a5938b5"),
+                               ("UPLOAD_AUTHORIZATION", "continue-0.1.1-after-36951118620")):
+                changed = copy.deepcopy(original)
+                changed["jobs"]["publish"]["steps"][index]["env"][key] = value
+                with self.subTest(index=index, key=key, value=value), self.assertRaises(ValueError):
+                    validate_workflow(changed)
 
     def test_comments_key_order_and_cli_whitespace_tolerated(self):
         document = load_workflow("# harmless YAML comment\n" + WORKFLOW.read_text())
@@ -130,7 +146,7 @@ class WorkflowTests(unittest.TestCase):
             cases.extend([(prefix + ("env", "UPLOAD_AUTHORIZATION"), "publish-0.1.1"),
                           (prefix + ("env", "BOOTSTRAP_TOKEN"), EXPR("secrets.OTHER_TOKEN")),
                           (prefix + ("continue-on-error",), True), (prefix + ("if",), EXPR("always()"))])
-            for suffix in (" || true", " > crate-publication/token.log", " --dry-run", " --crate counterfeit", "\ntrue", "; true"):
+            for suffix in (" || true", " > crate-publication/token.log", " --dry-run", " --crate counterfeit", "\ntrue", "; true", " --start-at 6", " --resume"):
                 cases.append((prefix + ("run",), original["jobs"]["publish"]["steps"][index]["run"] + suffix))
         for index in (0, 1, 2, 3, 5):
             cases.append((("jobs", "publish", "steps", index, "env",), {"TP_TOKEN": EXPR("steps.auth.outputs.token")}))

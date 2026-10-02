@@ -17,7 +17,7 @@ import crate_publish_io as c
 TOKENS = ("TP_TOKEN", "BOOTSTRAP_TOKEN", "GH_TOKEN", "GITHUB_TOKEN",
           "GH_RUNTIME_TOKEN", "ACTIONS_RUNTIME_TOKEN", "ACTIONS_ID_TOKEN_REQUEST_TOKEN")
 CHILD_KEYS = {"PATH", "RUSTUP_HOME", "HOME", "CARGO_HOME", "CARGO_TARGET_DIR", "CARGO_BUILD_BUILD_DIR",
-              "LC_ALL", "CARGO_REGISTRY_GLOBAL_CREDENTIAL_PROVIDERS", "CARGO_REGISTRY_CREDENTIAL_PROVIDER"}
+              "LC_ALL", "CARGO_REGISTRY_GLOBAL_CREDENTIAL_PROVIDERS", "CARGO_REGISTRY_CREDENTIAL_PROVIDER", "CARGO_HTTP_MULTIPLEXING"}
 
 
 class Tests(unittest.TestCase):
@@ -39,6 +39,7 @@ class Tests(unittest.TestCase):
         self.assertEqual(row["exit"], 7)
         child = run.call_args.kwargs["env"]
         self.assertEqual(set(child), CHILD_KEYS | {"CARGO_REGISTRY_TOKEN"})
+        self.assertEqual(child["CARGO_HTTP_MULTIPLEXING"], "false")
         self.assertTrue(set(child).isdisjoint(TOKENS))
         self.assertEqual(child["CARGO_REGISTRY_TOKEN"], self.env["BOOTSTRAP_TOKEN"])
         self.assertNotIn("CARGO_REGISTRY_TOKEN", c.child_env(self.output, self.env))

@@ -13,7 +13,35 @@ import trusted_publishing_readiness as t
 OUTPUT = Path("crate-publication")
 ORDER = tuple("lightr-core lightr-init lightr-store lightr-index lightr-oci lightr-views lightr-engine lightr-run hugr-lightr-cri-backend lightr-build hugr-lightr".split())
 BOOTSTRAP = {"hugr-lightr-cri-backend", "hugr-lightr"}
+CONTINUATION = "remaining-after-36951118620"
+PREFIX_FILE = Path(__file__).resolve().parents[2] / "packaging/crate-publication-0.1.1-prefix.json"
+PREFIX_SHA256 = "6d69cf4ec1cb97180e550ecf01af500730dea11a815e2924d3d043b78ecbe3d6"
 require = t.require
+
+
+def load_prefix():
+    try:
+        body = PREFIX_FILE.read_bytes()
+    except OSError:
+        raise t.ReadinessError("prefix evidence missing/unreadable") from None
+    require(io.hashlib.sha256(body).hexdigest() == PREFIX_SHA256, "prefix evidence content hash mismatch")
+    try:
+        data = json.loads(body)
+        require(set(data) == {"source", "version", "failed_run", "authority", "crates"}, "prefix evidence fields mismatch")
+        require(data["source"] == t.SOURCE, "prefix source mismatch")
+        require(data["version"] == "0.1.1" and type(data["failed_run"]) is int and data["failed_run"] == 36951118620,
+                "prefix version/run mismatch")
+        require(data["authority"] == "https://github.com/gmhelmold/hugr-lightr/issues/187#issuecomment-5944066332", "prefix authority mismatch")
+        require(isinstance(data["crates"], list) and len(data["crates"]) == 5, "prefix count mismatch")
+        for position, row in enumerate(data["crates"], 1):
+            require(set(row) == {"position", "name", "checksum"} and type(row["position"]) is int and
+                    row["position"] == position and row["name"] == ORDER[position - 1], "prefix order/name/position mismatch")
+            require(isinstance(row["checksum"], str) and io.re.fullmatch(r"[0-9a-f]{64}", row["checksum"]), "prefix checksum malformed")
+    except t.ReadinessError:
+        raise
+    except (ValueError, TypeError, KeyError):
+        raise t.ReadinessError("prefix evidence JSON malformed") from None
+    return data
 
 
 def snapshot():
@@ -48,14 +76,27 @@ def snapshot():
 def accepted(env):
     data = t.identity(env)
     require(data["source"] != data["verifier"], "publisher must be distinct from product source")
-    require(env.get("UPLOAD_AUTHORIZATION") == "publish-0.1.1", "explicit upload authorization required")
+    continuation = env.get("CONTINUATION", "")
+    require(continuation in ("", CONTINUATION), "unknown continuation forbidden")
+    authorization = "continue-0.1.1-after-36951118620" if continuation else "publish-0.1.1"
+    require(env.get("UPLOAD_AUTHORIZATION") == authorization, "explicit upload authorization required")
     require(bool(env.get("BOOTSTRAP_TOKEN", "").strip()), "bootstrap credential required; scope unknown")
-    return {k: data[k] for k in ("source", "verifier", "release_tag", "version", "repository")} | dict(packages=snapshot(), order=list(ORDER))
+    result = {k: data[k] for k in ("source", "verifier", "release_tag", "version", "repository")} | dict(packages=snapshot(), order=list(ORDER))
+    if continuation:
+        result.update(continuation=continuation, prefix=load_prefix())
+    return result
 
 
-def absent():
+def absent(prefix=None):
     observations = {}
+    prior = {row["name"]: row for row in (prefix or {}).get("crates", [])}
     for name in ORDER:
+        if name in prior:
+            version = io.registry(name, "0.1.1")
+            require(version["state"] == "existing" and version["checksum"] == prior[name]["checksum"] and
+                    version["yanked"] is False, "prefix registry checksum/yank/state mismatch: " + name)
+            observations[name] = dict(version=version)
+            continue
         control = io.registry(name, None if name in BOOTSTRAP else "0.1.0")
         require(control["state"] == ("absent" if name in BOOTSTRAP else "existing"), "registry positive/new-name control failed")
         observations[name] = dict(control=control, version=io.registry(name, "0.1.1"))
@@ -80,6 +121,8 @@ def publish_one(row, ledger, product, env):
     scratch = io.archive_path(OUTPUT, name, publish=True)
     scratch.unlink(missing_ok=True)  # Prepackage scratch cannot masquerade as publish's bytes.
     io.write(OUTPUT, "ledger.json", ledger, env)
+    if row["position"] == 6 and "prefix" in ledger["identity"]:
+        absent(ledger["identity"]["prefix"])  # Recheck after potentially slow verification, before first upload.
     row["publish_command"] = io.cargo(OUTPUT, product, name, "publish", env,
                                      "BOOTSTRAP_TOKEN" if row["authpath"] == "REGULAR" else "TP_TOKEN")
     row["exit"] = row["publish_command"]["exit"]
@@ -108,7 +151,7 @@ def main(argv=None, env=None):
         require(not (OUTPUT / "ledger.json").exists(), "batch already started; automatic resume/reupload forbidden")
         if argv == ["preflight"]:
             (OUTPUT / "preflight.json").unlink(missing_ok=True)
-            observations = absent()
+            observations = absent(data.get("prefix"))
             require(not product.exists(), "preflight product worktree already exists")
             t.git("worktree", "add", "--detach", str(product), t.SOURCE)
             clean(product)
@@ -118,12 +161,19 @@ def main(argv=None, env=None):
             require(json.loads((OUTPUT / "preflight.json").read_text()).get("identity") == data, "preflight snapshot mismatch")
             require(bool(env.get("TP_TOKEN", "").strip()), "OIDC credential required")
             clean(product)
-            require(json.loads((OUTPUT / "preflight.json").read_text()) == dict(identity=data, observations=absent(), bootstrap_scope="UNKNOWN; presence only"), "registry preflight observation mismatch")
+            observations = absent(data.get("prefix"))
+            require(json.loads((OUTPUT / "preflight.json").read_text()) == dict(identity=data, observations=observations, bootstrap_scope="UNKNOWN; presence only"), "registry preflight observation mismatch")
             for directory in ("home", "cargo", "target", "build"):
                 (output / directory).mkdir()
             ledger = dict(identity=data, state="STARTED", crates=[])
+            if "prefix" in data:
+                for prior in data["prefix"]["crates"]:
+                    ledger["crates"].append(dict(position=prior["position"], name=prior["name"], state="VERIFIED_PRIOR",
+                                                 original_run=data["prefix"]["failed_run"], authority=data["prefix"]["authority"],
+                                                 package_sha256=prior["checksum"], remote=observations[prior["name"]]["version"]))
             io.write(OUTPUT, "ledger.json", ledger, env)
-            for position, name in enumerate(ORDER, 1):
+            start = 6 if "prefix" in data else 1
+            for position, name in enumerate(ORDER[start - 1:], start):
                 clean(product)
                 row = dict(position=position, name=name, authpath="REGULAR" if name in BOOTSTRAP else "OIDC", exit=None, remote=dict(state="unknown"))
                 ledger["crates"].append(row)

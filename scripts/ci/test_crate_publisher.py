@@ -1,5 +1,6 @@
 """Real tagged/detached Git fixtures and executable fake Cargo; HTTPS replaced before any GET."""
 import contextlib
+import copy
 import hashlib
 import io
 import json
@@ -15,6 +16,13 @@ import crate_publisher as p
 
 NAMES = "lightr-core lightr-init lightr-store lightr-index lightr-oci lightr-views lightr-engine lightr-run hugr-lightr-cri-backend lightr-build hugr-lightr".split()
 SECRETS = {key: "synthetic-" + key + "-secret" for key in p.io.TOKEN_KEYS}
+PRIOR_HASHES = (
+    "1cd690f824465a5392ffdd43d7ea79690f3c5407cba8be923113d46efea9a12f",
+    "764e0214c8487a46a8ae22e2f48482a3130c10b11cb3c78ead1e88c46fb7c83b",
+    "4d94594ba4f426e09802de4504df8031515917e0297fd12976cb631e5be3e138",
+    "5ae72539fc31122f523a514f2b02514593dac04b0b6839a63a88308de5012c4f",
+    "b199c804deb364d50cf6047cc2ccfff48a6ff06fdc2549445d8eeaf0343b7b91",
+)
 FAKE = '''import gzip, io, json, os, pathlib, sys, tarfile
 base = pathlib.Path(__file__).parent
 mode = json.loads((base / 'mode.json').read_text())
@@ -55,6 +63,12 @@ sys.exit(settings.get('exit', 0))
 
 class Tests(unittest.TestCase):
     def setUp(self):
+        real_file = Path(__file__).resolve().parents[2] / "packaging/crate-publication-0.1.1-prefix.json"
+        body = real_file.read_bytes()
+        self.assertEqual(hashlib.sha256(body).hexdigest(), p.PREFIX_SHA256)
+        real = json.loads(body)
+        self.assertEqual((real["source"], real["version"], real["failed_run"]), ("47f02795d0884956c4755254b5f6fc377a5938b5", "0.1.1", 36951118620))
+        self.assertEqual(real["crates"], [dict(position=i, name=n, checksum=h) for i, (n, h) in enumerate(zip(NAMES[:5], PRIOR_HASHES), 1)])
         self.assertEqual(p.t.SOURCE, "47f02795d0884956c4755254b5f6fc377a5938b5")
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
@@ -84,6 +98,7 @@ class Tests(unittest.TestCase):
         Path("bin/cargo").chmod(0o755)
         self.mode = dict(source=self.source)
         self.network = "normal"
+        self.prior = {}
         self.env = dict(SECRETS, CANDIDATE_SHA=self.source, RELEASE_TAG="v0.1.1", VERIFIER_SHA=self.verifier, GITHUB_SHA=self.verifier, GITHUB_REPOSITORY=p.t.REPO, GITHUB_EVENT_NAME="workflow_dispatch", UPLOAD_AUTHORIZATION="publish-0.1.1", PATH=str(Path("bin").resolve()) + os.pathsep + os.environ["PATH"], RUSTUP_HOME=str(Path("toolchain").resolve()))
         transport = patch.object(p.io.urllib.request.HTTPSHandler, "https_open", side_effect=self.api)
         self.send = transport.start()
@@ -110,6 +125,13 @@ class Tests(unittest.TestCase):
         if exists and uploaded and version == ["0.1.1"]:
             (p.OUTPUT / ("indexed-" + name)).touch()
         value = {"version": dict(crate=name, num=version[0], checksum=hashlib.sha256(path.read_bytes()).hexdigest() if path.exists() else "a" * 64, yanked=self.network == "yanked" and uploaded)} if version else {"crate": dict(id=name)}
+        if version == ["0.1.1"] and name in self.prior:
+            exists = self.prior[name].get("present", True)
+            value["version"].update({k: v for k, v in self.prior[name].items() if k != "present"})
+            if exists:
+                (p.OUTPUT / ("indexed-" + name)).touch()
+        if not version and name in p.BOOTSTRAP and self.network == "new-name":
+            exists = True
         if self.network == "checksum" and uploaded:
             value["version"]["checksum"] = "b" * 64
         body, status = json.dumps(value if exists else {"errors": [{"detail": "fixture not found"}]}).encode(), 200 if exists else 404
@@ -130,6 +152,128 @@ class Tests(unittest.TestCase):
                 self.assertNotIn(token, text)
         return status, out.getvalue()
 
+    def continuation(self):
+        self.env.update(CONTINUATION="remaining-after-36951118620", UPLOAD_AUTHORIZATION="continue-0.1.1-after-36951118620")
+        self.document = dict(source=self.source, version="0.1.1", failed_run=36951118620,
+                             authority="https://github.com/gmhelmold/hugr-lightr/issues/187#issuecomment-5944066332",
+                             crates=[dict(position=i, name=n, checksum=h) for i, (n, h) in enumerate(zip(NAMES[:5], PRIOR_HASHES), 1)])
+        path = patch.object(p, "PREFIX_FILE", Path("prefix.json").resolve())
+        digest = patch.object(p, "PREFIX_SHA256", "fixture digest")
+        path.start()
+        digest.start()
+        self.addCleanup(path.stop)
+        self.addCleanup(digest.stop)
+        self.set_prefix(self.document)
+        self.prior = {n: dict(checksum=h, yanked=False) for n, h in zip(NAMES[:5], PRIOR_HASHES)}
+
+    def set_prefix(self, document, pin=True):
+        body = json.dumps(document).encode()
+        p.PREFIX_FILE.write_bytes(body)
+        if pin:
+            p.PREFIX_SHA256 = hashlib.sha256(body).hexdigest()
+
+    def test_continuation_six_uploads_original_positions_and_auth(self):
+        self.continuation()
+        self.assertEqual(self.call("preflight")[0], 0)
+        self.assertEqual(self.call("publish")[0], 0)
+        calls = [json.loads(l) for l in Path("bin/calls.jsonl").read_text().splitlines()]
+        uploads = [(a[-1], e) for a, e in calls if a[1] == "publish"]
+        self.assertEqual([n for n, e in uploads], NAMES[5:])
+        self.assertEqual(len(calls), 12)
+        for name, env in uploads:
+            self.assertEqual(env["CARGO_REGISTRY_TOKEN"], SECRETS["BOOTSTRAP_TOKEN" if name in ("hugr-lightr-cri-backend", "hugr-lightr") else "TP_TOKEN"])
+            self.assertEqual(env["CARGO_HTTP_MULTIPLEXING"], "false")
+        receipt = json.loads((p.OUTPUT / "receipt.json").read_text())
+        self.assertEqual(receipt["state"], "COMPLETE")
+        self.assertEqual([r["position"] for r in receipt["crates"]], list(range(1, 12)))
+        for row, checksum in zip(receipt["crates"][:5], PRIOR_HASHES):
+            self.assertEqual((row["state"], row["original_run"], row["package_sha256"]), ("VERIFIED_PRIOR", 36951118620, checksum))
+            self.assertEqual(row["authority"], self.document["authority"])
+            self.assertTrue({"package_command", "publish_command", "log"}.isdisjoint(row))
+        for row in receipt["crates"][5:]:
+            self.assertEqual(row["state"], "PUBLISHED")
+            self.assertEqual(row["prepackage_sha256"], row["package_sha256"])
+        self.assertTrue(all(r["remote"]["checksum"] == r["package_sha256"] for r in receipt["crates"]))
+        self.assertIn("already started", self.call("publish")[1])
+        self.assertEqual(len(Path("bin/calls.jsonl").read_text().splitlines()), 12)
+
+    def test_continuation_prefix_and_authorization_fail_closed(self):
+        self.continuation()
+        p.PREFIX_FILE.unlink()
+        self.assertIn("prefix evidence missing", self.call("preflight")[1])
+        self.set_prefix(self.document)
+        changed = copy.deepcopy(self.document)
+        changed["crates"][0]["checksum"] = "b" * 64
+        self.set_prefix(changed, pin=False)
+        self.assertIn("content hash mismatch", self.call("preflight")[1])
+        with self.assertRaisesRegex(p.t.ReadinessError, "content hash mismatch"):
+            p.load_prefix()
+        for key, value, message in [("source", self.verifier, "source mismatch"), ("version", "9.9.9", "version/run"),
+                                    ("failed_run", 0, "version/run"), ("authority", "unapproved", "authority mismatch")]:
+            changed = copy.deepcopy(self.document)
+            changed[key] = value
+            self.set_prefix(changed)
+            self.assertIn(message, self.call("preflight")[1])
+        for defect in ("missing", "duplicate", "name", "checksum", "field"):
+            changed = copy.deepcopy(self.document)
+            if defect == "missing":
+                changed["crates"].pop()
+            else:
+                row = changed["crates"][1]
+                row.update({"name": NAMES[0]} if defect == "duplicate" else {"name": "wrong"} if defect == "name" else {"checksum": "short"} if defect == "checksum" else {"extra": True})
+            self.set_prefix(changed)
+            self.assertIn("prefix", self.call("preflight")[1])
+        p.PREFIX_FILE.write_bytes(b"not JSON")
+        p.PREFIX_SHA256 = hashlib.sha256(b"not JSON").hexdigest()
+        self.assertIn("JSON malformed", self.call("preflight")[1])
+        self.set_prefix(self.document)
+        for env in (self.env | {"CONTINUATION": "unknown"}, self.env | {"UPLOAD_AUTHORIZATION": "publish-0.1.1"},
+                    self.env | {"CONTINUATION": ""}):
+            self.assertEqual(self.call("preflight", env)[0], 1)
+        self.assertFalse(Path("bin/calls.jsonl").exists())
+
+    def test_continuation_live_rechecks_and_second_failure(self):
+        self.continuation()
+        for index, defect in enumerate(("checksum", "yanked", "missing", "remaining", "new-name", "old-control")):
+            with self.subTest(defect=defect), patch.object(p, "OUTPUT", Path("live-" + str(index))):
+                saved = copy.deepcopy(self.prior)
+                if defect in ("checksum", "yanked", "missing"):
+                    self.prior[NAMES[0]].update(dict(checksum="b" * 64) if defect == "checksum" else dict(yanked=True) if defect == "yanked" else dict(present=False))
+                elif defect == "remaining":
+                    self.prior[NAMES[5]] = dict(checksum="a" * 64, yanked=False)
+                else:
+                    self.network = "new-name" if defect == "new-name" else "old-missing"
+                self.assertEqual(self.call("preflight")[0], 1)
+                self.prior, self.network = saved, "normal"
+        with patch.object(p, "OUTPUT", Path("changed-live")):
+            self.assertEqual(self.call("preflight")[0], 0)
+            self.prior[NAMES[0]]["checksum"] = "b" * 64
+            self.assertIn("prefix registry", self.call("publish")[1])
+            self.prior[NAMES[0]]["checksum"] = PRIOR_HASHES[0]
+        self.assertFalse(Path("bin/calls.jsonl").exists())
+        with patch.object(p, "OUTPUT", Path("changed-during-package")):
+            self.assertEqual(self.call("preflight")[0], 0)
+            cargo = p.io.cargo
+            def change_during_package(*args, **kwargs):
+                result = cargo(*args, **kwargs)
+                self.prior[NAMES[0]]["yanked"] = True
+                return result
+            with patch.object(p.io, "cargo", side_effect=change_during_package):
+                self.assertIn("prefix registry", self.call("publish")[1])
+            self.assertEqual([json.loads(l)[0][1] for l in Path("bin/calls.jsonl").read_text().splitlines()], ["package"])
+            self.prior[NAMES[0]]["yanked"] = False
+            Path("bin/calls.jsonl").unlink()
+        with patch.object(p, "OUTPUT", Path("second-failure")):
+            self.assertEqual(self.call("preflight")[0], 0)
+            self.mode["publish"] = dict(exit=7)
+            self.assertEqual(self.call("publish")[0], 1)
+            ledger = json.loads((p.OUTPUT / "ledger.json").read_text())
+            self.assertEqual((ledger["state"], len(ledger["crates"]), ledger["crates"][-1]["position"]), ("PARTIAL_FAILED", 6, 6))
+            self.assertEqual(ledger["crates"][-1]["exit"], 7)
+            self.assertIn("already started", self.call("publish")[1])
+            self.assertFalse((p.OUTPUT / "receipt.json").exists())
+            self.assertEqual(len(Path("bin/calls.jsonl").read_text().splitlines()), 2)
+
     def test_serial_auth_environment_and_receipt(self):
         self.assertEqual(self.call("preflight")[0], 0)
         self.network = "transient"
@@ -140,7 +284,8 @@ class Tests(unittest.TestCase):
             phase, slot = argv[1], index // 2
             self.assertEqual(argv, ["+1.96.0", phase, "--locked", "--registry", "crates-io", "--manifest-path", str((p.OUTPUT / "product/Cargo.toml").resolve()), "-p", NAMES[slot]])
             self.assertEqual(env.get("CARGO_REGISTRY_TOKEN"), None if phase == "package" else SECRETS["BOOTSTRAP_TOKEN" if slot in (8, 10) else "TP_TOKEN"])
-            self.assertEqual(set(env) - {"__CF_USER_TEXT_ENCODING", "LC_CTYPE", "CARGO_REGISTRY_TOKEN"}, {"PATH", "RUSTUP_HOME", "HOME", "CARGO_HOME", "CARGO_TARGET_DIR", "CARGO_BUILD_BUILD_DIR", "LC_ALL", "CARGO_REGISTRY_GLOBAL_CREDENTIAL_PROVIDERS", "CARGO_REGISTRY_CREDENTIAL_PROVIDER"})
+            self.assertEqual(set(env) - {"__CF_USER_TEXT_ENCODING", "LC_CTYPE", "CARGO_REGISTRY_TOKEN"}, {"PATH", "RUSTUP_HOME", "HOME", "CARGO_HOME", "CARGO_TARGET_DIR", "CARGO_BUILD_BUILD_DIR", "LC_ALL", "CARGO_REGISTRY_GLOBAL_CREDENTIAL_PROVIDERS", "CARGO_REGISTRY_CREDENTIAL_PROVIDER", "CARGO_HTTP_MULTIPLEXING"})
+            self.assertEqual(env["CARGO_HTTP_MULTIPLEXING"], "false")
             self.assertEqual(env["CARGO_REGISTRY_CREDENTIAL_PROVIDER"], "cargo:token")
             self.assertTrue(Path(env["HOME"]).is_relative_to(p.OUTPUT.resolve()))
         receipt = json.loads((p.OUTPUT / "receipt.json").read_text())
