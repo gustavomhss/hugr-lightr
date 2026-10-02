@@ -1,5 +1,7 @@
 # R4 Trusted Publishing: Configuration and Live Auth-Only Proof
 
+**Historical receipt:** nine-binding proof and pending gates below describe run36908078128; subsequent completion is recorded at the end.
+
 **Recorded:** 2026-10-01. **PASS: OIDC existing-nine version-publish auth-path readiness**, from matching configuration readbacks plus live exchange/revocation; not publication success or permission to upload.
 [Setup/proof authority][authority], [registration status][registration], and [live owner acceptance][accepted] are distinct records. Regular-token `publish-new`/`publish-update` remain **UNVERIFIED**; two absent crates require regular-auth first publication. R4 publication/promotion remain pending.
 
@@ -88,3 +90,9 @@ VZ remains **NOT EXECUTED/unvalidated**, waived only as a `0.1.1` predecessor; f
 [publish]: https://github.com/rust-lang/crates.io/blob/a8b65a92154cd737b48abe84136e19156bcfefd2/src/controllers/krate/publish.rs
 [usage]: https://github.com/rust-lang/crates.io/blob/a8b65a92154cd737b48abe84136e19156bcfefd2/svelte/src/routes/docs/trusted-publishing/+page.svelte
 [rfc]: https://rust-lang.github.io/rfcs/3691-trusted-publishing-cratesio.html#future-possibilities
+
+## Subsequent publication and bindings — 2026-10-02
+
+[Actual publication receipt](R4-crates-publication.md), accepted in [#187/comment5945488224](https://github.com/gmhelmold/hugr-lightr/issues/187#issuecomment-5945488224), supersedes publication/bootstrap pending state: all eleven versions published, nine via OIDC and backend/CLI via successful regular-auth first writes.
+Metadata readback now has eleven matching bindings: original22982–22990 fields/timestamps unchanged; backend23094 created `2026-10-02T04:08:37.591485Z`, CLI23095 `2026-10-02T04:08:39.068130Z`, each with the exact shared fields above.
+Configuration eligibility is now eleven; this does not rewrite the historical nine-binding auth-only mint or prove a subsequent eleven-binding mint/opaque-token allowlist. Environment bootstrap secret removed successfully; local credentials untouched, values not recorded. Later [delivery/promotion authorization](https://github.com/gmhelmold/hugr-lightr/issues/187#issuecomment-5945719224) is granted; proposed metadata awaits final review/CI, promotion and anonymous delivery checks remain unexecuted. VZ remains NOT EXECUTED/unvalidated under 0.1.1-only waiver.

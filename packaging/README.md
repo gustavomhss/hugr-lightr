@@ -30,8 +30,21 @@ artifact plus its `.sha256`, rejects a checksum entry whose filename differs
 from downloaded artifact, then verifies SHA-256 before extraction. On macOS it
 tries signed name first, then only explicit `-unsigned` name.
 
-`lightr.rb` contains only macOS arm64 and Linux x86_64 template slots. Owner
-fills one macOS URL matching receipt signing status after R0-R3 approval.
+Installer and formula configure `0.1.1` delivery under
+[owner delivery/promotion approval](https://github.com/gmhelmold/hugr-lightr/issues/187#issuecomment-5945719224).
+Release `400899741` remains a draft with five unchanged assets; these download
+URLs become anonymous only after the owner promotes that draft.
+
+Qualified product/tag: `47f02795d0884956c4755254b5f6fc377a5938b5` / `v0.1.1`.
+This delivery-metadata revision is separate from the qualified product and
+[native R3 verifier](../docs/plans/unix-first-go-live/evidence/R3-public-release-assets.md).
+That receipt binds tarball/installed-binary SHA-256 and native version/help smoke;
+it does not establish full VZ validation or a GA sandbox guarantee.
+The formula selects the recorded unsigned/ad-hoc macOS artifact: no Developer ID,
+not notarized. **VZ NOT EXECUTED/unvalidated; full R2 incomplete**;
+[owner waiver](../docs/plans/unix-first-go-live/evidence/R0-0.1.1-owner-waivers.md)
+applies to `0.1.1` only; [#113](https://github.com/gmhelmold/hugr-lightr/issues/113)
+remains open for future native-hardware evidence.
 
 ## Local Candidate Artifact
 
@@ -40,5 +53,6 @@ bash packaging/release.sh
 ```
 
 Local recipe never uploads. It produces host artifact only when host is Linux
-x86_64 or macOS arm64; macOS output is `-unsigned` because local recipe does
-not sign or notarize. Record output in R1/R2, not template placeholders.
+x86_64 or macOS arm64; [release.sh](release.sh) ad-hoc signs macOS staging bytes
+with [VZ entitlements](vz.entitlements) (since #259). Output remains `-unsigned`:
+no Developer ID signing or notarization. Record output in R1/R2 receipts.

@@ -3,10 +3,11 @@
 
 set -eu
 
-# Set only by owner G-PUBLISH after R0-R3 approval. RELEASES_URL is GitHub's
-# release-download base without tag, for example https://github.com/org/repo/releases/download.
-RELEASES_URL="__PLACEHOLDER__RELEASES_URL__"
-VERSION="__PLACEHOLDER__VERSION__"
+# Owner delivery approval: https://github.com/gmhelmold/hugr-lightr/issues/187#issuecomment-5945719224
+# Qualified v0.1.1 assets; draft 400899741 awaits owner promotion.
+# These download URLs become anonymous only after promotion.
+RELEASES_URL='https://github.com/gmhelmold/hugr-lightr/releases/download'
+VERSION='0.1.1'
 
 BINARY_NAME="lightr"
 DEFAULT_INSTALL_DIR="${HOME}/.local/bin"

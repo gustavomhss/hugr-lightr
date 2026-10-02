@@ -6,6 +6,7 @@ import os
 import subprocess
 import tarfile
 import tempfile
+import tomllib
 import unittest
 from pathlib import Path
 
@@ -13,6 +14,7 @@ import yaml
 
 
 ROOT = Path(__file__).resolve().parents[2]
+VERSION = tomllib.loads((ROOT / "Cargo.toml").read_text())["workspace"]["package"]["version"]
 WORKFLOW = ROOT / ".github/workflows/release.yml"
 INSTALLER = ROOT / "packaging/install.sh"
 EXPECTED_TARGETS = {
@@ -133,9 +135,9 @@ class ReleaseContractTests(unittest.TestCase):
     def test_installer_rejects_checksum_hash_and_filename_mutations(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            artifact = root / "lightr-0.1.0-linux-x86_64.tar.gz"
+            artifact = root / f"lightr-{VERSION}-linux-x86_64.tar.gz"
             with tarfile.open(artifact, "w:gz") as archive:
-                payload = b"#!/bin/sh\necho lightr 0.1.0\n"
+                payload = f"#!/bin/sh\necho lightr {VERSION}\n".encode()
                 info = tarfile.TarInfo("lightr")
                 info.mode = 0o755
                 info.size = len(payload)
@@ -156,7 +158,7 @@ class ReleaseContractTests(unittest.TestCase):
         script = root / "install.sh"
         script.write_text(INSTALLER.read_text().replace(
             "__PLACEHOLDER__RELEASES_URL__", "https://release.invalid"
-        ).replace("__PLACEHOLDER__VERSION__", "0.1.0"))
+        ).replace("__PLACEHOLDER__VERSION__", VERSION))
         bin_dir = root / "bin"
         bin_dir.mkdir(exist_ok=True)
         (bin_dir / "uname").write_text("#!/bin/sh\n[ \"$1\" = -s ] && echo Linux || echo x86_64\n")

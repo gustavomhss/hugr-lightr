@@ -1,5 +1,7 @@
 # R4 Publisher Preflight: Non-Upload Evidence
 
+**Historical receipt:** statuses and pending gates below describe this GET-only preflight; subsequent completion is recorded at the end.
+
 **Recorded:** 2026-10-01. **Status:** Identity/direct ownership and
 `trusted-publishing` management scope proven; **regular-token publish-new/update UNVERIFIED; R4 pending**.
 Authority: [prepared-source freeze][freeze] and [preparation permission][prep].
@@ -57,3 +59,9 @@ Draft snapshot explicitly says "Qualification draft — not published" and "VZ N
 [tag-auth]: https://github.com/gmhelmold/hugr-lightr/issues/187#issuecomment-5929619780
 [auth]: https://github.com/rust-lang/crates.io/blob/a8b65a92154cd737b48abe84136e19156bcfefd2/src/auth.rs
 [controller]: https://github.com/rust-lang/crates.io/blob/a8b65a92154cd737b48abe84136e19156bcfefd2/src/controllers/trustpub/github_configs/list.rs
+
+## Subsequent completion — 2026-10-02
+
+[Actual publication receipt](R4-crates-publication.md), accepted in [#187/comment5945488224](https://github.com/gmhelmold/hugr-lightr/issues/187#issuecomment-5945488224), records all eleven versions published/indexed/non-yanked: five original uploads, six controlled continuation uploads. Earlier absence/bootstrap blocks remain historical observations.
+Regular-auth first writes at positions 9/11 succeeded; applicable PubNew capability is proven for those writes, not blanket publish-new/update scope introspection. All eleven bindings now match; original nine unchanged, backend23094/CLI23095 added after bootstrap.
+Later [owner delivery/promotion authorization](https://github.com/gmhelmold/hugr-lightr/issues/187#issuecomment-5945719224) is granted; metadata is prepared in the proposed revision, pending final review/CI. Draft promotion and subsequent anonymous delivery checks remain unexecuted; source/tag/five assets unchanged. VZ waiver and original GET-only proof reach remain unchanged.
