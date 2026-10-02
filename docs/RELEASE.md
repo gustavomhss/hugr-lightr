@@ -3,7 +3,7 @@
 This procedure authorizes nothing. R0-R3 receipts for one frozen candidate and
 explicit human-owner `G-PUBLISH` are required before publication.
 The prepared candidate has `publish = true` for eleven intended root packages;
-all eleven `0.1.1` crates are now published under explicit owner authorization; GitHub draft promotion is authorized, pending execution after final delivery review/CI. A tag alone creates no asset or release.
+**0.1.1 GO-LIVE COMPLETE UNDER OWNER WAIVER:** all eleven crates are published; GitHub release `400899741` is public, with anonymous delivery verified in [R4](plans/unix-first-go-live/evidence/R4-public-release.md). VZ remains NOT EXECUTED/unvalidated; full R2 incomplete. A tag alone creates no asset or release.
 
 ## Frozen Public Matrix
 
@@ -56,7 +56,7 @@ performance claim follows. See the separate [policy acceptance receipt](plans/un
 The documentation commit is not qualified. Any changed publication source needs
 a new final R0 and rerun receipts; recorded acceptance does not qualify it.
 The VZ-only waiver remains limited to 0.1.1. Actual public `release.yml` outputs,
-authenticated publication readiness, and explicit publication actions remain required.
+authenticated publication readiness, and explicit publication actions were completed; future releases require their own qualification and authorization.
 Historical `ca88415` acceptance does not qualify this source. [GET preflight](plans/unix-first-go-live/evidence/R4-publisher-preflight.md)
 proved identity/direct ownership and management scope only. [Historical live OIDC proof](plans/unix-first-go-live/evidence/R4-trusted-publishing.md) established existing-nine auth-path readiness; [actual publication receipt](plans/unix-first-go-live/evidence/R4-crates-publication.md) now records nine OIDC publications and two successful regular-auth first writes, without blanket token-scope introspection.
 
@@ -129,21 +129,21 @@ Current harness `f9c2202de58e8454183c7bad3a78fc85b9e693aa` retains default `auth
 Regular-auth bootstrap succeeded at backend position 9 and CLI 11; bindings 23094/23095 now match original nine unchanged bindings. Applicable PubNew is proven for those two writes only; regular-token global scopes remain opaque. Environment bootstrap secret was removed successfully; local credentials untouched.
 All eleven `0.1.1` versions are immutable/non-yanked; current frozen driver guards block reruns and are not a generic future publisher. Keep qualified source, packages and producer fixed; changing them restarts R0 and rerun receipts.
 
-### Qualified Draft and Remaining Owner Actions
+### Completed 0.1.1 Public Release and Historical Owner Order
 
 **Historical 0.1.1 order exception:** [owner choice "Autorizar tag e draft"](https://github.com/gmhelmold/hugr-lightr/issues/187#issuecomment-5929619780) authorized annotated `v0.1.1` at `47f02795d0884956c4755254b5f6fc377a5938b5`, `release.yml` dispatch, explicit `G-PUBLISH` reviews, uploads and DRAFT qualification before publish-new/update scope proof. That authority advanced binary qualification only; later crate authorization is recorded separately above. Default rights-before-tag order otherwise remains.
-Producer completed and immutable-ID DRAFT created; [actual public native receipt](plans/unix-first-go-live/evidence/R3-public-release-assets.md) records PASS on both targets under [owner acceptance](https://github.com/gmhelmold/hugr-lightr/issues/187#issuecomment-5934996357). Crate publication/bootstrap are COMPLETE. [Owner delivery/promotion authorization](https://github.com/gmhelmold/hugr-lightr/issues/187#issuecomment-5945719224) is granted; proposed delivery metadata awaits final cold review/CI. Draft `400899741` remains `draft=true`, `published_at=null`, with five unchanged assets; promotion and subsequent anonymous delivery checks are not executed.
+Producer created the qualified DRAFT; [native R3](plans/unix-first-go-live/evidence/R3-public-release-assets.md) records both targets PASS under [owner acceptance](https://github.com/gmhelmold/hugr-lightr/issues/187#issuecomment-5934996357). Crates/bootstrap and delivery review/CI/landing are COMPLETE. Under [delivery/promotion authorization](https://github.com/gmhelmold/hugr-lightr/issues/187#issuecomment-5945719224), release `400899741` became public at `2026-10-02T05:29:38Z`, `draft=false`, `prerelease=false`, five assets unchanged; [completion record](https://github.com/gmhelmold/hugr-lightr/issues/187#issuecomment-5946324644) and [anonymous R4](plans/unix-first-go-live/evidence/R4-public-release.md) bind execution and its test boundaries.
 Independent consumer/workflow `b0aabc450eab83ee844c29273b8203e5fd84365f` verified frozen producer `47f0279`; it neither qualifies its own source nor changes the product. Changing selected publication source/producer workflow restarts R0 and reruns.
 
-Steps 1–5 record the completed 0.1.1 sequence and future-release prerequisites; step 6 is prepared in this proposed revision, step 7 is authorized but unexecuted. Do not repeat completed publication or move its tag.
+Steps 1–7 record the completed 0.1.1 sequence; prerequisite descriptions guide future newly authorized releases only. This read-only snapshot grants no authority. Do not repeat publication or move its tag.
 
 1. Owner authorized preparation, then actual ordered crate publication and controlled continuation; R0/R4 record distinct authorities. Identity/ownership, OIDC readiness, registry checks and two regular-auth first writes are complete. Separate delivery/promotion authorization is now recorded above.
 2. Intended packages are already `publish = true` in frozen `47f0279`. Any change to selected publication source, manifests or producer workflow invalidates qualification: freeze changed source anew and rerun Linux/hosted receipts. Only VZ is waived for 0.1.1; historical `ca88415` evidence does not qualify changed source. Do not change manifests after qualification or retag the same version.
 3. Only after final qualification and explicit owner execution authorization, create/push annotated `v0.1.1` (signed if configured) at the final immutable SHA. Manually dispatch `release.yml` from that workflow revision with that exact SHA/tag; required `G-PUBLISH` reviews gate uploads and creation of a DRAFT, not promotion. Tag alone builds, uploads, and releases nothing.
 4. Independently qualify ACTUAL public-workflow outputs: verify original individual `.sha256` files, artifact/binary identities, architecture/features, and macOS `codesign --verify --strict` plus Boolean-true `com.apple.security.virtualization` and truthful signing status. Complete fresh Linux and macOS checksum/install/version/help/hash/cleanup receipts using those exact output bytes. Cached RC outputs do not inherit or substitute for this qualification.
 5. The qualified, reviewed and explicitly authorized 0.1.1 sequence completed in listed order, with indexing/checksum checks and regular-auth first publications at positions 9/11; new bindings followed bootstrap. Future publication requires renewed qualification, registry/auth checks and execution authorization. Do not change qualified manifests or tag.
-6. Installer release base/version and formula URLs/SHA-256 values are prepared for `0.1.1` from exact verified R3 assets; macOS selects `-unsigned`. This consumer-delivery revision awaits final review/CI and landing; it is separate from qualified product/producer `47f0279`, with no new version, rebuild or tag.
-7. Owner authorized promotion of immutable draft `400899741` after final delivery review/CI and asset identity checks. Promotion remains unexecuted; anonymous URL/download/checksum/install checks follow actual promotion and are not yet claimed. Neither waiver nor self-review permission substitutes for execution authorization.
+6. Reviewed, CI-green delivery landed at `44adeb386df87d45943acca0d9fbc2081373b770`: installer/formula select exact R3 `0.1.1` URLs/hashes, macOS `-unsigned`. Consumer metadata is separate from product/producer `47f0279`; no new version, rebuild or tag.
+7. Owner-authorized promotion completed after delivery review/CI and before/after identity checks. Anonymous tag/latest API and five stable downloads returned HTTP 200; checksum/install routing controls passed within [R4 scope](plans/unix-first-go-live/evidence/R4-public-release.md). Prior native R3 remains the execution evidence; no owner publication operation remains for 0.1.1. Neither waiver nor self-review permission grants future execution authority.
 
 Secrets, `publish = true`, manual workflow dispatch, environment approval,
 release upload, and draft promotion are owner actions. The explicit

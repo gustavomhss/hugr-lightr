@@ -32,11 +32,11 @@ tries signed name first, then only explicit `-unsigned` name.
 
 Installer and formula configure `0.1.1` delivery under
 [owner delivery/promotion approval](https://github.com/gmhelmold/hugr-lightr/issues/187#issuecomment-5945719224).
-Release `400899741` remains a draft with five unchanged assets; these download
-URLs become anonymous only after the owner promotes that draft.
+Release [v0.1.1](https://github.com/gmhelmold/hugr-lightr/releases/tag/v0.1.1), ID `400899741`, is public since `2026-10-02T05:29:38Z`, `draft=false`, `prerelease=false`, five assets unchanged.
+[R4 completion](../docs/plans/unix-first-go-live/evidence/R4-public-release.md) records anonymous downloads and installer routing/byte-copy controls; formula metadata evaluation is not an actual Homebrew install.
 
 Qualified product/tag: `47f02795d0884956c4755254b5f6fc377a5938b5` / `v0.1.1`.
-This delivery-metadata revision is separate from the qualified product and
+Delivery source `44adeb386df87d45943acca0d9fbc2081373b770` is separate from the qualified product and
 [native R3 verifier](../docs/plans/unix-first-go-live/evidence/R3-public-release-assets.md).
 That receipt binds tarball/installed-binary SHA-256 and native version/help smoke;
 it does not establish full VZ validation or a GA sandbox guarantee.
