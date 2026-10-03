@@ -5,18 +5,20 @@ services. "Install" means: get the binary onto your `PATH`, and (only if you
 want to run Linux containers in a microVM on macOS) install one Linux pack and
 codesign the binary with the virtualization entitlement.
 
-> **Honesty note.** Pre-built binaries, Homebrew, and crates.io are
-> **available on release** but currently **owner-gated** (`G-PUBLISH`). The
-> next candidate is owner-approved as 0.1.1, CLI package `hugr-lightr`, but no
-> Unix-first public release has shipped yet — do not expect `brew install lightr` or
-> `cargo install hugr-lightr --version 0.1.1 --locked` to work today. This command
-> is conditional on owner G-PUBLISH and an actual indexed 0.1.1 release; the
-> binary remains `lightr`. Registry absence is not a reservation or publishing
-> permission; see [preflight](NAMING.md#2026-09-30-publication-preflight). The runbook to
-> publish is [`docs/RELEASE.md`](RELEASE.md). Until then, **build from
-> source** (below). Likewise, only the **Intel x86_64 macOS `vz`** path is
-> runtime-validated end-to-end; the other platform engines are code-complete
-> but hardware-gated — see the matrix at the bottom.
+> **Migration and release status.** Active development and delivery moved to
+> [gusmhs/hugr-lightr](https://github.com/gusmhs/hugr-lightr); historical commits,
+> authors, and receipts keep their original identities. Historical **0.1.1 was
+> published** ([R4 receipt](plans/unix-first-go-live/evidence/R4-public-release.md)),
+> but **still has the native `-e` bug**: explicit environment values are keyed but
+> not applied to the foreground child. The source fix is on `main`
+> ([ADR-0023](adr/0023-native-explicit-env-cache.md)); **0.1.2 qualification is
+> pending**. Identical 0.1.1 GitHub assets are being restored under the new repo;
+> installer/formula downloads depend on that restoration. Build from `main` for
+> the fix; `cargo install hugr-lightr --version 0.1.1 --locked` still selects the
+> historical package, not the fix. Public artifact support remains Linux x86_64
+> and macOS arm64 only; macOS artifacts remain unsigned/ad-hoc, not notarized,
+> and packaged VZ remains unvalidated. See [packaging](../packaging/README.md)
+> and the platform matrix below.
 
 ---
 
@@ -36,9 +38,12 @@ codesign the binary with the virtualization entitlement.
 
 ## Install from source
 
-From the repository root:
+Clone the active repository, then build from its root:
 
 ```sh
+git clone https://github.com/gusmhs/hugr-lightr
+cd hugr-lightr
+
 # Build the release binary (all engines except vz):
 cargo build --release --bin lightr
 
@@ -218,21 +223,22 @@ agent surface) is the same code on every platform and is fully tested.
 
 ---
 
-## Distribution channels (available on release — not live today)
-
-These exist as code-complete, metadata-ready packaging but are **owner-gated**
-and have **not** shipped a public release yet:
+## Distribution channels (historical 0.1.1; migration in progress)
 
 - **Homebrew** — formula at [`packaging/lightr.rb`](../packaging/lightr.rb)
-  (carries post-release placeholders until a Release exists).
+  selects the exact historical 0.1.1 URLs/hashes under the new repo. Formula
+  metadata evaluation is not evidence of an actual Homebrew install.
 - **`curl | sh` installer** — [`packaging/install.sh`](../packaging/install.sh)
-  (fails loudly while its placeholders are unfilled — by design).
-- **crates.io** — per-crate publish metadata is ready on all crates; the
-  workspace ships `publish = false` until the owner flips the gate.
-- **GitHub Releases** — initial public matrix is only Linux x86_64 and macOS
-  arm64. Tags create no assets; owner manual `G-PUBLISH` approval gates remote
-  artifact upload and draft release. macOS signing waits on owner secrets, and
-  unsigned artifacts are clearly labeled.
+  selects 0.1.1 under the new repo and verifies the matching artifact checksum.
+  Both installer and formula depend on identical asset restoration.
+- **crates.io** — the eleven intended 0.1.1 packages were published
+  ([publication receipt](plans/unix-first-go-live/evidence/R4-crates-publication.md));
+  the CLI package is `hugr-lightr`, binary `lightr`. Published 0.1.1 is unchanged.
+- **GitHub Releases** — [v0.1.1](https://github.com/gusmhs/hugr-lightr/releases/tag/v0.1.1)
+  is the restoration target for the original bytes, not a rebuilt bug fix.
+  Public artifacts remain Linux x86_64 and macOS arm64 only; the macOS artifact
+  is explicitly `-unsigned` (ad-hoc, no Developer ID, not notarized).
 
-Until any of those go live, **build from source** as above. The publishing
-procedure is documented in [`docs/RELEASE.md`](RELEASE.md).
+For the native explicit-env fix, **build from `main`** as above. No 0.1.2 release
+is qualified by this migration. Future publication requires separate qualification
+and owner authorization; see [`docs/RELEASE.md`](RELEASE.md).

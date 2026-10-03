@@ -25,8 +25,8 @@ exclude = ["crates/lightr-cri-serve"]
 version = "0.1.1"
 edition = "2021"
 license = "Apache-2.0"
-repository = "https://github.com/HumanGuardrail/hugr-lightr"
-homepage = "https://github.com/HumanGuardrail/hugr-lightr"
+repository = "https://github.com/gusmhs/hugr-lightr"
+homepage = "https://github.com/gusmhs/hugr-lightr"
 readme = "README.md"
 # Apache-2.0 license gate is resolved (ADR-0008). Owner approved 0.1.1
 # publication preparation (#187, comment 5928309446); actual publishing

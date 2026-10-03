@@ -3,10 +3,10 @@
 
 set -eu
 
-# Owner delivery approval: https://github.com/gmhelmold/hugr-lightr/issues/187#issuecomment-5945719224
-# Qualified v0.1.1 assets; draft 400899741 awaits owner promotion.
-# These download URLs become anonymous only after promotion.
-RELEASES_URL='https://github.com/gmhelmold/hugr-lightr/releases/download'
+# Historical delivery approval: https://github.com/gmhelmold/hugr-lightr/issues/187#issuecomment-5945719224
+# Migration target: identical historical v0.1.1 assets, not rebuilt binaries.
+# Downloads depend on asset restoration; 0.1.1 retains the native -e bug.
+RELEASES_URL='https://github.com/gusmhs/hugr-lightr/releases/download'
 VERSION='0.1.1'
 
 BINARY_NAME="lightr"

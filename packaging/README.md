@@ -30,9 +30,18 @@ artifact plus its `.sha256`, rejects a checksum entry whose filename differs
 from downloaded artifact, then verifies SHA-256 before extraction. On macOS it
 tries signed name first, then only explicit `-unsigned` name.
 
-Installer and formula configure `0.1.1` delivery under
-[owner delivery/promotion approval](https://github.com/gmhelmold/hugr-lightr/issues/187#issuecomment-5945719224).
-Release [v0.1.1](https://github.com/gmhelmold/hugr-lightr/releases/tag/v0.1.1), ID `400899741`, is public since `2026-10-02T05:29:38Z`, `draft=false`, `prerelease=false`, five assets unchanged.
+Installer and formula now configure `0.1.1` delivery from
+[gusmhs/hugr-lightr](https://github.com/gusmhs/hugr-lightr/releases/tag/v0.1.1).
+Downloads depend on restoration of identical historical assets; version selectors,
+artifact names, hashes, platform guards, and unsigned semantics are unchanged.
+Historical 0.1.1 retains the native `-e` bug; the source fix is on `main`
+([ADR-0023](../docs/adr/0023-native-explicit-env-cache.md)), with 0.1.2 qualification pending.
+
+Historical [owner delivery/promotion approval](https://github.com/gmhelmold/hugr-lightr/issues/187#issuecomment-5945719224)
+and original [v0.1.1 release](https://github.com/gmhelmold/hugr-lightr/releases/tag/v0.1.1)
+record release ID `400899741`, public since `2026-10-02T05:29:38Z`,
+`draft=false`, `prerelease=false`, five assets unchanged. Those IDs and receipts
+describe the original repository, not new migration objects.
 [R4 completion](../docs/plans/unix-first-go-live/evidence/R4-public-release.md) records anonymous downloads and installer routing/byte-copy controls; formula metadata evaluation is not an actual Homebrew install.
 
 Qualified product/tag: `47f02795d0884956c4755254b5f6fc377a5938b5` / `v0.1.1`.
@@ -43,8 +52,8 @@ it does not establish full VZ validation or a GA sandbox guarantee.
 The formula selects the recorded unsigned/ad-hoc macOS artifact: no Developer ID,
 not notarized. **VZ NOT EXECUTED/unvalidated; full R2 incomplete**;
 [owner waiver](../docs/plans/unix-first-go-live/evidence/R0-0.1.1-owner-waivers.md)
-applies to `0.1.1` only; [#113](https://github.com/gmhelmold/hugr-lightr/issues/113)
-remains open for future native-hardware evidence.
+applies to `0.1.1` only; historical [#113](https://github.com/gmhelmold/hugr-lightr/issues/113)
+records the native-hardware evidence gap, not an operational issue in the new repo.
 
 ## Local Candidate Artifact
 

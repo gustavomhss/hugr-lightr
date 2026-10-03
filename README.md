@@ -4,7 +4,15 @@
 > with a memory: workspaces materialize from a content-addressed store,
 > runs are memoized — identical work never executes twice.
 
-[![ci](https://github.com/HumanGuardrail/hugr-lightr/actions/workflows/ci.yml/badge.svg)](https://github.com/HumanGuardrail/hugr-lightr/actions/workflows/ci.yml)
+[![ci](https://github.com/gusmhs/hugr-lightr/actions/workflows/ci.yml/badge.svg)](https://github.com/gusmhs/hugr-lightr/actions/workflows/ci.yml)
+
+> **Repository migration:** active development and delivery now use
+> [gusmhs/hugr-lightr](https://github.com/gusmhs/hugr-lightr). Historical commits,
+> authors, and evidence retain their original identities.
+> Historical **0.1.1 still has the native `-e` bug**:
+> explicit environment values are keyed but not applied to the foreground child.
+> The source fix is on `main` ([ADR-0023](docs/adr/0023-native-explicit-env-cache.md));
+> **0.1.2 qualification is pending**. See [install status](docs/install.md).
 
 ![memo demo — the same build twice: 20.6 s, then 10 ms](docs/assets/memo-demo.gif)
 
@@ -75,7 +83,7 @@ lightr CLI ──> store (CAS + Action Cache) ──> engines
 ## Quickstart (30 seconds)
 
 ```sh
-$ git clone https://github.com/HumanGuardrail/hugr-lightr && cd hugr-lightr
+$ git clone https://github.com/gusmhs/hugr-lightr && cd hugr-lightr
 $ cargo build --release            # bin ~6 MB · Rust 1.96 — or grab a prebuilt binary from Releases
 $ alias lightr=./target/release/lightr
 $ lightr snapshot --dir . --name @me/proj
@@ -116,4 +124,4 @@ everywhere: unsupported paths error, they don't silently degrade.
 
 ---
 
-Apache-2.0 · github.com/HumanGuardrail/hugr-lightr
+Apache-2.0 · github.com/gusmhs/hugr-lightr
