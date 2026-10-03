@@ -48,7 +48,18 @@ python3 benchmarks/native/build.py --source-dir "$PWD/product" --source-sha 64db
 python3 benchmarks/native/campaign.py --binary "$PWD/product/target/release/lightr" --source-dir "$PWD/product" --source-sha 64db16ac29664ee9078f96b6f30ee9ca7b03174d --build-receipt "$PWD/native-build.json" --rounds 21 --warmups 2 --sizes 1000,10000 --out "$PWD/native-results"
 ```
 
-## Cache calibration: parallel metadata candidate
+## Historical cache experiment: parallel metadata withdrawn
+
+**Disposition:** the owner rejected this optimization after reviewing its absolute
+benefit: approximately 17.6 ms saved for the synthetic 10k-input HIT, with additional
+temporary allocations, concurrency and size-dependent behavior. The scanner now
+uses the prior sequential metadata path; useful tests, measurement tooling and the
+evidence below remain. These results describe the withdrawn candidate, not current
+performance. CI and networking repairs are separate and remain in place.
+
+Future optimization requires a demonstrated bottleneck and a meaningful reduction
+in an actual build/test workflow's end-to-end time, weighed against implementation
+and resource costs. A relative microbenchmark improvement alone is insufficient.
 
 [Same-runner A/B run 37156020089](https://github.com/gusmhs/hugr-lightr/actions/runs/37156020089)
 compared baseline `1e9e022a7d899a70b3d2955f0669b21cfa9ffabc` with candidate

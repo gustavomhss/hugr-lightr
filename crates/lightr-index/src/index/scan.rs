@@ -79,8 +79,7 @@ pub fn scan(root: &Path, index: &mut Index) -> Result<WalkReport> {
 
     let canonical_root = root.canonicalize().map_err(LightrError::Io)?;
 
-    // Keep ignore traversal sequential; metadata queries for large trees can
-    // share the existing Rayon pool without changing traversal/filter policy.
+    // Collect walk candidates sequentially (ignore::Walk isn't Send easily)
     let mut candidates: Vec<WalkCandidate> = Vec::new();
 
     let walker = WalkBuilder::new(&canonical_root)
@@ -99,22 +98,20 @@ pub fn scan(root: &Path, index: &mut Index) -> Result<WalkReport> {
         })
         .build();
 
-    let paths: Vec<PathBuf> = walker
-        .filter_map(std::result::Result::ok)
-        .map(|entry| entry.into_path())
-        .filter(|path| path != &canonical_root)
-        .collect();
-    let metadata: Vec<_> = if paths.len() >= 2048 {
-        paths
-            .par_iter()
-            .with_min_len(128)
-            .map(|path| path.symlink_metadata())
-            .collect()
-    } else {
-        paths.iter().map(|path| path.symlink_metadata()).collect()
-    };
-    for (abs_path, meta) in paths.into_iter().zip(metadata) {
-        let meta = match meta {
+    for result in walker {
+        let entry = match result {
+            Ok(e) => e,
+            Err(_) => continue, // ignore walk errors
+        };
+
+        let abs_path = entry.path().to_path_buf();
+
+        // Skip the root itself
+        if abs_path == canonical_root {
+            continue;
+        }
+
+        let meta = match abs_path.symlink_metadata() {
             Ok(m) => m,
             Err(_) => continue,
         };
