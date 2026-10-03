@@ -50,9 +50,14 @@ def verify(e, api, env):
     if mac:
         require(e.run("sysctl", "-n", "hw.optional.arm64") == "1", "arm64 capability required")
         host.update(model=e.run("sysctl", "-n", "hw.model"), version=e.run("sw_vers"))
+    workflow = api.get("actions/workflows/release.yml")
+    require(isinstance(workflow, dict), "producer workflow object required")
+    workflow_id = identity(workflow, "workflow")
+    require(workflow.get("path") == ".github/workflows/release.yml" and workflow.get("state") == "active",
+            "producer workflow path/active required")
     producer = api.get(f"actions/runs/{run}")
     require(producer.get("id") == int(run) and producer.get("path") == ".github/workflows/release.yml" and
-            producer.get("workflow_id") == 299070533 and producer.get("event") == "workflow_dispatch" and
+            type(producer.get("workflow_id")) is int and producer.get("workflow_id") == workflow_id and producer.get("event") == "workflow_dispatch" and
             producer.get("head_sha") == candidate and producer.get("status") == "completed" and
             producer.get("conclusion") == "success" and type(producer.get("run_attempt")) is int and producer["run_attempt"] > 0, "producer run identity/success")
     jobs = listing(api, f"actions/runs/{run}/jobs?per_page=100", "jobs")
@@ -132,7 +137,7 @@ def verify(e, api, env):
     data = dict(version=version, candidate_sha=candidate, compiled_source=candidate, producer_workflow_sha=candidate,
                 verification_workflow_sha=verifier, target=target, native_host=host,
                 runner={k: env.get(k) for k in ("RUNNER_OS", "RUNNER_ARCH", "ImageOS", "ImageVersion", "GITHUB_RUN_ID", "GITHUB_RUN_ATTEMPT")},
-                producer_run=dict(id=int(run), run_attempt=producer["run_attempt"], url=f"https://github.com/{REPO}/actions/runs/{run}"),
+                producer_run=dict(id=int(run), workflow_id=workflow_id, run_attempt=producer["run_attempt"], url=f"https://github.com/{REPO}/actions/runs/{run}"),
                 jobs=[dict(id=identity(j, "job"), name=j["name"], url=f"https://github.com/{REPO}/actions/runs/{run}/job/{j['id']}") for j in jobs],
                 artifact=dict(id=aid, url=f"https://api.github.com/repos/{REPO}/actions/artifacts/{aid}/zip", zip_sha256=sha(packed), api_digest=artifact["digest"]),
                 release_id=identity(release, "release"), release_assets=[dict(id=a["id"], name=a["name"], url=f"https://api.github.com/repos/{REPO}/releases/assets/{a['id']}") for a in assets], assets=evidence, archive_sha256=archive_sha, binary_sha256=binary_sha,

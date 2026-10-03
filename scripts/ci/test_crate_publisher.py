@@ -99,7 +99,7 @@ class Tests(unittest.TestCase):
         self.mode = dict(source=self.source)
         self.network = "normal"
         self.prior = {}
-        self.env = dict(SECRETS, CANDIDATE_SHA=self.source, RELEASE_TAG="v0.1.1", VERIFIER_SHA=self.verifier, GITHUB_SHA=self.verifier, GITHUB_REPOSITORY=p.t.REPO, GITHUB_EVENT_NAME="workflow_dispatch", UPLOAD_AUTHORIZATION="publish-0.1.1", PATH=str(Path("bin").resolve()) + os.pathsep + os.environ["PATH"], RUSTUP_HOME=str(Path("toolchain").resolve()))
+        self.env = dict(SECRETS, CANDIDATE_SHA=self.source, RELEASE_TAG="v0.1.1", VERIFIER_SHA=self.verifier, GITHUB_SHA=self.verifier, GITHUB_REPOSITORY="gusmhs/hugr-lightr", GITHUB_EVENT_NAME="workflow_dispatch", UPLOAD_AUTHORIZATION="publish-0.1.1", PATH=str(Path("bin").resolve()) + os.pathsep + os.environ["PATH"], RUSTUP_HOME=str(Path("toolchain").resolve()))
         transport = patch.object(p.io.urllib.request.HTTPSHandler, "https_open", side_effect=self.api)
         self.send = transport.start()
         self.addCleanup(transport.stop)
@@ -296,7 +296,7 @@ class Tests(unittest.TestCase):
     def test_identity_order_credentials_and_snapshot_before_upload(self):
         with patch.object(p.t, "SOURCE", self.verifier):
             self.assertIn("frozen candidate mismatch", self.call("preflight")[1])
-        for key, value in [("CANDIDATE_SHA", self.verifier), ("VERIFIER_SHA", self.source), ("UPLOAD_AUTHORIZATION", ""), ("GITHUB_REPOSITORY", "other/repo"), ("GITHUB_EVENT_NAME", "push"), ("RELEASE_TAG", "v9.9.9"), ("BOOTSTRAP_TOKEN", " ")]:
+        for key, value in [("CANDIDATE_SHA", self.verifier), ("VERIFIER_SHA", self.source), ("UPLOAD_AUTHORIZATION", ""), ("GITHUB_REPOSITORY", "other/repo"), ("GITHUB_REPOSITORY", "gmhelmold/hugr-lightr"), ("GITHUB_EVENT_NAME", "push"), ("RELEASE_TAG", "v9.9.9"), ("BOOTSTRAP_TOKEN", " ")]:
             self.assertEqual(self.call("preflight", self.env | {key: value})[0], 1)
         for order in (p.ORDER[:-1], p.ORDER[:-1] + (p.ORDER[0],), p.ORDER[::-1]):
             with patch.object(p, "ORDER", order):

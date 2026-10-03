@@ -36,7 +36,7 @@ class Tests(unittest.TestCase):
         self.git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "-c", "commit.gpgsign=false", "commit", "-qm", "verifier")
         self.verifier = self.git("rev-parse", "HEAD")
         self.env = dict(CANDIDATE_SHA=self.source, RELEASE_TAG="v0.1.1", VERIFIER_SHA=self.verifier,
-                        GITHUB_SHA=self.verifier, GITHUB_REPOSITORY=t.REPO, GITHUB_EVENT_NAME="workflow_dispatch")
+                        GITHUB_SHA=self.verifier, GITHUB_REPOSITORY="gusmhs/hugr-lightr", GITHUB_EVENT_NAME="workflow_dispatch")
         pin = patch.object(t, "SOURCE", self.source)
         pin.start()
         self.addCleanup(pin.stop)
@@ -95,7 +95,7 @@ class Tests(unittest.TestCase):
     def test_identity_guards(self):
         self.assertEqual(self.call("source")[0], 1)
         cases = {"CANDIDATE_SHA": [self.verifier, "A" * 40, "abc"], "RELEASE_TAG": ["v9.9.9", "--help"],
-                 "GITHUB_EVENT_NAME": ["push"], "GITHUB_REPOSITORY": ["other/repo"],
+                 "GITHUB_EVENT_NAME": ["push"], "GITHUB_REPOSITORY": ["other/repo", "gmhelmold/hugr-lightr"],
                  "VERIFIER_SHA": [self.source, "A" * 40], "GITHUB_SHA": [self.source], "TP_TOKEN": [TOKEN]}
         for key, values in cases.items():
             for value in values:
@@ -110,6 +110,17 @@ class Tests(unittest.TestCase):
         self.git("tag", "-d", "v0.1.1")
         self.git("-c", "tag.gpgsign=false", "tag", "v0.1.1", self.source)
         self.assertIn("annotated tag required", self.call("preflight")[1])
+
+    def test_migrated_repository_authority(self):
+        self.assertEqual(t.REPO, "gusmhs/hugr-lightr")
+        self.assertEqual(self.call("preflight")[0], 0)
+        self.assertEqual(json.loads((t.OUTPUT / "preflight.json").read_text())["repository"], "gusmhs/hugr-lightr")
+        with patch.object(t.urllib.request, "build_opener") as auth:
+            status, logs = self.call("preflight", dict(self.env, GITHUB_REPOSITORY="gmhelmold/hugr-lightr"))
+        self.assertEqual((status, logs), (1, "FAIL: repository mismatch\n"))
+        self.assertFalse((t.OUTPUT / "preflight.json").exists())
+        self.assertFalse((t.OUTPUT / "receipt.json").exists())
+        auth.assert_not_called()
 
     def test_failed_proofs_never_write_receipt(self):
         minted = dict(self.env, TP_TOKEN=TOKEN)

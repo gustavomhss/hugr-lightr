@@ -20,7 +20,7 @@ class Fixture(BaseFixture):
         super().__enter__()
         os.environ.update(PUBLIC_RELEASE_RUN_ID="123", PUBLIC_RELEASE_ID="99", RELEASE_TAG="v0.1.1", PUBLIC_RELEASE_TARGET="darwin-arm64",
                           VERIFIER_SHA="b" * 40, GITHUB_SHA="b" * 40, HEAD_SHA="b" * 40,
-                          GITHUB_REPOSITORY=p.REPO, GH_TOKEN="fixture-private-token")
+                          GITHUB_REPOSITORY="gusmhs/hugr-lightr", GH_TOKEN="fixture-private-token")
         self.tool(self.root / "tools", "codesign", "print('Signature=adhoc' if '-dv' in sys.argv else '<?xml version=\"1.0\"?><plist><dict><key>com.apple.security.virtualization</key><true/></dict></plist>' if '-d' in sys.argv else '')")
         self.tool(self.root / "tools", "git", "print('" + "b"*40 + "')")
         build = ["Checkout", "Verify owner-selected candidate and tag", "Build release binary", "Package tarball and checksum", "Upload build artifact"]
@@ -28,7 +28,8 @@ class Fixture(BaseFixture):
                      ("assemble draft GitHub Release", ["Download Unix-first artifacts", "Assemble SHA256SUMS", "Create draft release"])]
         self.tarname = self.tar.name; self.linux = "lightr-0.1.1-linux-x86_64.tar.gz"
         self.rows = {
-            "actions/runs/123": dict(id=123, run_attempt=1, path=".github/workflows/release.yml", workflow_id=299070533, event="workflow_dispatch", head_sha="a" * 40, status="completed", conclusion="success"),
+            "actions/workflows/release.yml": dict(id=456, path=".github/workflows/release.yml", state="active"),
+            "actions/runs/123": dict(id=123, run_attempt=1, path=".github/workflows/release.yml", workflow_id=456, event="workflow_dispatch", head_sha="a" * 40, status="completed", conclusion="success"),
             "actions/runs/123/jobs?per_page=100": dict(total_count=3, jobs=[dict(id=i+1, name=n, status="completed", conclusion="success", steps=[dict(name=s, status="completed", conclusion="success") for s in steps]) for i, (n, steps) in enumerate(job_specs)]),
             "contents/Cargo.toml?ref=" + "a" * 40: dict(encoding="base64", content=base64.b64encode(b'[workspace.package]\nversion="0.1.1"\n').decode()),
             "git/ref/tags/v0.1.1": dict(object=dict(type="tag", sha="c" * 40)),
@@ -71,11 +72,16 @@ class Tests(unittest.TestCase):
         with Fixture() as f:
             # Real subprocess gh stub: fixed GET argv, binary stdout, isolated config.
             Path("responses.json").write_text(json.dumps({k: base64.b64encode(v if isinstance(v, bytes) else json.dumps(v).encode()).decode() for k, v in f.rows.items()}))
-            f.tool(f.root / "tools", "gh", f"import json, base64\nassert sys.argv[1:6] == ['api', '--hostname', 'github.com', '--method', 'GET']\nassert os.environ['GH_TOKEN'] == 'fixture-private-token'\nassert 'HOME' not in os.environ\nkey = sys.argv[6].removeprefix('repos/{p.REPO}/')\nmedia = 'application/octet-stream' if key.startswith('releases/assets/') else 'application/vnd.github+json'\nassert sys.argv[7:] == ['-H', 'Accept: ' + media]\nsys.stdout.buffer.write(base64.b64decode(json.load(open('responses.json'))[key]))")
+            f.tool(f.root / "tools", "gh", "import json, base64\nassert sys.argv[1:6] == ['api', '--hostname', 'github.com', '--method', 'GET']\nassert os.environ['GH_TOKEN'] == 'fixture-private-token'\nassert 'HOME' not in os.environ\nassert sys.argv[6].startswith('repos/gusmhs/hugr-lightr/')\nkey = sys.argv[6].removeprefix('repos/gusmhs/hugr-lightr/')\nmedia = 'application/octet-stream' if key.startswith('releases/assets/') else 'application/vnd.github+json'\nassert sys.argv[7:] == ['-H', 'Accept: ' + media]\nsys.stdout.buffer.write(base64.b64decode(json.load(open('responses.json'))[key]))")
             e = p.PublicEvidence("receipt"); api = p.Api(e, os.environ["GH_TOKEN"])
             data = p.verify(e, api, os.environ)
             self.assertEqual(data["compiled_source"], "a"*40); self.assertEqual(data["verification_workflow_sha"], "b"*40); self.assertEqual(data["producer_run"]["run_attempt"], 1)
             self.assertEqual(data["release_id"], 99)
+            self.assertEqual(data["producer_run"]["workflow_id"], 456)
+            oracle = [c for c in data["commands"] if c["argv"][0:2] == ["gh", "api"] and
+                      c["argv"][6] == "repos/gusmhs/hugr-lightr/actions/workflows/release.yml"]
+            self.assertEqual(len(oracle), 1)
+            self.assertEqual(oracle[0]["exit_code"], 0)
             self.assertEqual(data["vz_boot"], "NOT EXECUTED"); self.assertEqual(len(data["release_assets"]), 5)
             with tarfile.open(f.tar) as opened:
                 self.assertEqual(data["binary_sha256"], p.sha(opened.extractfile("lightr").read()))
@@ -87,8 +93,14 @@ class Tests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "endpoint forbidden"): api.get("../other")
     def test_rejects_named_defects(self):
         cases = [
+            ("former repository", "repository/token", lambda f: os.environ.update(GITHUB_REPOSITORY="gmhelmold/hugr-lightr")),
+            ("workflow ID", "immutable workflow ID", lambda f: f.rows["actions/workflows/release.yml"].update(id=0)),
+            ("workflow path", "workflow path/active", lambda f: f.rows["actions/workflows/release.yml"].update(path=".github/workflows/other.yml")),
+            ("workflow state", "workflow path/active", lambda f: f.rows["actions/workflows/release.yml"].update(state="disabled_manually")),
             ("run source", "producer run", lambda f: f.rows["actions/runs/123"].update(head_sha="d"*40)),
             ("run workflow", "producer run", lambda f: f.rows["actions/runs/123"].update(workflow_id=1)),
+            ("run former workflow", "producer run", lambda f: f.rows["actions/runs/123"].update(workflow_id=299070533)),
+            ("run path", "producer run", lambda f: f.rows["actions/runs/123"].update(path=".github/workflows/other.yml")),
             ("run event", "producer run", lambda f: f.rows["actions/runs/123"].update(event="push")),
             ("run pending", "producer run", lambda f: f.rows["actions/runs/123"].update(status="in_progress")),
             ("run attempt missing", "producer run", lambda f: f.rows["actions/runs/123"].pop("run_attempt")),
@@ -184,13 +196,55 @@ class Tests(unittest.TestCase):
             self.assertFalse(any(c["argv"][0] == "codesign" for c in data["commands"]))
     def test_mutation_probes(self):
         source = Path(p.__file__).read_text()
-        for before, defect in (('artifact.get("digest") == f"sha256:{sha(packed)}"', "ZIP hash"), ('body == pair[name]', "public bytes")):
+        for before, defect in (('artifact.get("digest") == f"sha256:{sha(packed)}"', "ZIP hash"), ('body == pair[name]', "public bytes"),
+                               ('env.get("GITHUB_REPOSITORY") == REPO', "former repository"),
+                               ('type(producer.get("workflow_id")) is int and producer.get("workflow_id") == workflow_id', "run workflow"),
+                               ('workflow.get("path") == ".github/workflows/release.yml"', "workflow path"),
+                               ('workflow.get("state") == "active"', "workflow state"),
+                               ('type(value) is int and value > 0', "workflow ID")):
             self.assertEqual(source.count(before), 1)
             mutant = types.ModuleType("mutant"); exec(compile(source.replace(before, "True"), "mutant", "exec"), mutant.__dict__)
             with patch(__name__+".p", mutant), patch.object(Tests, "only_defect", defect, create=True):
                 result = unittest.TestResult(); Tests("test_rejects_named_defects").run(result)
             self.assertEqual(result.errors, [], "unrelated mutation harness error")
             self.assertEqual(len(result.failures), 1, "critical check mutation must turn rejection test RED")
+    def test_workflow_oracle_fields_missing_wrong_and_empty(self):
+        for field, values, error in (("id", (None, 0, -1, True, "456", 456.0), "immutable workflow ID"),
+                                     ("path", (None, "", ".github/workflows/other.yml", "release.yml"), "workflow path/active"),
+                                     ("state", (None, "", "disabled_manually", "disabled_inactivity", "deleted"), "workflow path/active")):
+            for missing, value in [(True, None)] + [(False, value) for value in values]:
+                with self.subTest(field=field, missing=missing, value=value), Fixture() as f:
+                    workflow = f.rows["actions/workflows/release.yml"]
+                    if missing: workflow.pop(field)
+                    else: workflow[field] = value
+                    with self.assertRaisesRegex(ValueError, error): f.verify()
+                    self.assertFalse(Path("receipt/receipt.json").exists())
+                    self.assertTrue(Path("receipt/commands.json").is_file())
+        for value in ({}, None, []):
+            with self.subTest(workflow=value), Fixture() as f:
+                f.rows["actions/workflows/release.yml"] = value
+                with self.assertRaisesRegex(ValueError, "workflow (ID|object)"): f.verify()
+                self.assertFalse(Path("receipt/receipt.json").exists())
+        for value in (None, True, "456", 456.0, 0, 299070533):
+            with self.subTest(producer_workflow_id=value), Fixture() as f:
+                f.rows["actions/runs/123"]["workflow_id"] = value
+                with self.assertRaisesRegex(ValueError, "producer run"): f.verify()
+                self.assertFalse(Path("receipt/receipt.json").exists())
+        with Fixture() as f:
+            f.rows["actions/runs/123"].pop("workflow_id")
+            with self.assertRaisesRegex(ValueError, "producer run"): f.verify()
+            self.assertFalse(Path("receipt/receipt.json").exists())
+    def test_workflow_id_follows_live_oracle(self):
+        for workflow_id in (1, 789):
+            with self.subTest(workflow_id=workflow_id), Fixture() as f:
+                f.rows["actions/workflows/release.yml"]["id"] = workflow_id
+                f.rows["actions/runs/123"]["workflow_id"] = workflow_id
+                self.assertEqual(f.verify()["producer_run"]["workflow_id"], workflow_id)
+        with Fixture() as f:
+            f.rows["actions/workflows/release.yml"]["id"] = 1
+            f.rows["actions/runs/123"]["workflow_id"] = True
+            with self.assertRaisesRegex(ValueError, "producer run"): f.verify()
+            self.assertFalse(Path("receipt/receipt.json").exists())
     def test_all_jobs_mutation_probe(self):
         source = Path(p.__file__).read_text()
         before = "for job in jobs:"

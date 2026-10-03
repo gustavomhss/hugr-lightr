@@ -11,7 +11,7 @@ import urllib.error
 import urllib.request
 
 SOURCE = "47f02795d0884956c4755254b5f6fc377a5938b5"
-REPO = "gmhelmold/hugr-lightr"
+REPO = "gusmhs/hugr-lightr"
 ENDPOINT = "https://crates.io/api/v1/trusted_publishing/tokens"
 OUTPUT = Path("trusted-publishing-readiness")
 

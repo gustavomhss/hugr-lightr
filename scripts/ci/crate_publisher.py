@@ -31,6 +31,7 @@ def load_prefix():
         require(data["source"] == t.SOURCE, "prefix source mismatch")
         require(data["version"] == "0.1.1" and type(data["failed_run"]) is int and data["failed_run"] == 36951118620,
                 "prefix version/run mismatch")
+        # Historical prefix metadata only; this authority is never fetched.
         require(data["authority"] == "https://github.com/gmhelmold/hugr-lightr/issues/187#issuecomment-5944066332", "prefix authority mismatch")
         require(isinstance(data["crates"], list) and len(data["crates"]) == 5, "prefix count mismatch")
         for position, row in enumerate(data["crates"], 1):

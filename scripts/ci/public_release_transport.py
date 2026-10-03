@@ -7,7 +7,7 @@ import re
 import subprocess
 from macos_candidate import require
 
-REPO = "gmhelmold/hugr-lightr"
+REPO = "gusmhs/hugr-lightr"
 LIMIT = 128 * 1024 * 1024  # Post-capture size check, not a streaming memory bound.
 
 def sha(body):
@@ -78,7 +78,7 @@ class Api:
     def get(self, endpoint, binary=False):
         # Endpoint <=256 characters; positive IDs 1..20 digits; tag components 1..10 digits.
         require(isinstance(endpoint, str) and len(endpoint) <= 256, "API endpoint forbidden: size/type")
-        allowed = r"actions/runs/[1-9][0-9]{0,19}(?:/(?:jobs|artifacts)\?per_page=100)?|actions/artifacts/[1-9][0-9]{0,19}/zip|contents/Cargo.toml\?ref=[0-9a-f]{40}|git/(?:ref/tags/v[0-9]{1,10}\.[0-9]{1,10}\.[0-9]{1,10}|tags/[0-9a-f]{40})|releases/(?:[1-9][0-9]{0,19}|assets/[1-9][0-9]{0,19})"
+        allowed = r"actions/workflows/release\.yml|actions/runs/[1-9][0-9]{0,19}(?:/(?:jobs|artifacts)\?per_page=100)?|actions/artifacts/[1-9][0-9]{0,19}/zip|contents/Cargo.toml\?ref=[0-9a-f]{40}|git/(?:ref/tags/v[0-9]{1,10}\.[0-9]{1,10}\.[0-9]{1,10}|tags/[0-9a-f]{40})|releases/(?:[1-9][0-9]{0,19}|assets/[1-9][0-9]{0,19})"
         require(re.fullmatch(allowed, endpoint), "API endpoint forbidden")
         accept = "application/octet-stream" if endpoint.startswith("releases/assets/") else "application/vnd.github+json"
         argv = ["gh", "api", "--hostname", "github.com", "--method", "GET", f"repos/{REPO}/{endpoint}", "-H", f"Accept: {accept}"]

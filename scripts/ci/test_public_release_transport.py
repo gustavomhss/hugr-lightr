@@ -12,6 +12,12 @@ import unittest
 from unittest.mock import patch
 import public_release_transport as t
 
+FORBIDDEN_ENDPOINTS = ("../other", "releases/tags/v0.1.1", "releases/0", "https://other/repo", "actions/runs/1?method=POST",
+                       "actions/workflows", "actions/workflows/299070533", "actions/workflows/other.yml",
+                       "actions/workflows/releaseXyml", "actions/workflows/release.yml?ref=main",
+                       "actions/workflows/release.yml/dispatches", "actions/workflows/../release.yml",
+                       "repos/gmhelmold/hugr-lightr/actions/workflows/release.yml")
+
 class Fixture:
     def __enter__(self):
         self.tmp = tempfile.TemporaryDirectory(prefix="public transport ")
@@ -36,11 +42,12 @@ class Fixture:
 class Tests(unittest.TestCase):
     def test_endpoint_media_and_binary_stdout(self):
         for endpoint, binary, media, body in (
+            ("actions/workflows/release.yml", False, "application/vnd.github+json", b'{"id":456,"path":".github/workflows/release.yml","state":"active"}'),
             ("actions/artifacts/77/zip", True, "application/vnd.github+json", b"PK\x00\xff"),
             ("releases/assets/12", True, "application/octet-stream", b"\x1f\x8b\xff"),
             ("releases/99", False, "application/vnd.github+json", b'{"id":99,"draft":true}')):
             with self.subTest(endpoint=endpoint), Fixture() as f:
-                f.tool("gh", f"assert sys.argv[1:] == ['api', '--hostname', 'github.com', '--method', 'GET', 'repos/gmhelmold/hugr-lightr/{endpoint}', '-H', 'Accept: {media}']\nassert os.environ['GH_TOKEN'] == 'SYNTH-gh-token'\nassert set(os.environ) <= {{'PATH', 'GH_TOKEN', 'GH_HOST', 'GH_CONFIG_DIR', 'LC_CTYPE', '__CF_USER_TEXT_ENCODING'}}\nassert os.listdir(os.environ['GH_CONFIG_DIR']) == []\nsys.stdout.buffer.write({body!r})")
+                f.tool("gh", f"assert sys.argv[1:] == ['api', '--hostname', 'github.com', '--method', 'GET', 'repos/gusmhs/hugr-lightr/{endpoint}', '-H', 'Accept: {media}']\nassert os.environ['GH_TOKEN'] == 'SYNTH-gh-token'\nassert set(os.environ) <= {{'PATH', 'GH_TOKEN', 'GH_HOST', 'GH_CONFIG_DIR', 'LC_CTYPE', '__CF_USER_TEXT_ENCODING'}}\nassert os.listdir(os.environ['GH_CONFIG_DIR']) == []\nsys.stdout.buffer.write({body!r})")
                 api = t.Api(f.e, os.environ["GH_TOKEN"])
                 try:
                     actual = api.get(endpoint, binary)
@@ -53,7 +60,7 @@ class Tests(unittest.TestCase):
     def test_get_restriction_before_subprocess(self):
         with Fixture() as f:
             api = t.Api(f.e, os.environ["GH_TOKEN"])
-            for endpoint in ("../other", "releases/tags/v0.1.1", "releases/0", "https://other/repo", "actions/runs/1?method=POST"):
+            for endpoint in FORBIDDEN_ENDPOINTS:
                 with self.subTest(endpoint=endpoint), patch.object(t.subprocess, "run", return_value=types.SimpleNamespace(returncode=0, stdout=b"{}")) as run:
                     with self.assertRaisesRegex(ValueError, "API endpoint forbidden"):
                         api.get(endpoint)
@@ -98,6 +105,14 @@ class Tests(unittest.TestCase):
                 self.assertNotIn("private body", log)
                 self.assertNotIn("SYNTH-gh-token", log)
                 self.assertIn(t.sha(body), log)
+    def test_workflow_api_missing_empty_and_malformed_fail_closed(self):
+        for code, body, error in ((1, b"not found", "GET failed"), (0, b"", "GET failed"),
+                                  (0, b"bad JSON", "JSON malformed"), (0, b"null", "JSON object required"),
+                                  (0, b"[]", "JSON object required")):
+            with self.subTest(code=code, body=body), Fixture() as f:
+                f.tool("gh", f"sys.stdout.buffer.write({body!r}); sys.exit({code})")
+                with self.assertRaisesRegex(ValueError, error):
+                    t.Api(f.e, os.environ["GH_TOKEN"]).get("actions/workflows/release.yml")
     def test_spawn_errors_are_redacted_without_chain(self):
         for missing_cwd in (False, True):
             with self.subTest(cwd=missing_cwd), Fixture() as f:
@@ -128,9 +143,10 @@ class Tests(unittest.TestCase):
     def test_root_mutation_probes(self):
         source = Path(t.__file__).read_text()
         mutations = [
+            ('REPO = "gusmhs/hugr-lightr"', 'REPO = "gmhelmold/hugr-lightr"', "test_endpoint_media_and_binary_stdout", 4),
             ('body = body.replace(token.encode(), b"[REDACTED]")', 'body = body', "test_failure_redaction_before_all_output_writes", 1),
             ('endpoint.startswith("releases/assets/")', 'binary', "test_endpoint_media_and_binary_stdout", 1),
-            ('require(re.fullmatch(allowed, endpoint), "API endpoint forbidden")', 'require(True, "mutant")', "test_get_restriction_before_subprocess", 5),
+            ('require(re.fullmatch(allowed, endpoint), "API endpoint forbidden")', 'require(True, "mutant")', "test_get_restriction_before_subprocess", len(FORBIDDEN_ENDPOINTS)),
             ('child_env = dict(PATH=os.environ["PATH"], HOME=str(home), LC_ALL="C", TMPDIR=str(self.tmp))', 'child_env = dict(os.environ, HOME=str(home), LC_ALL="C", TMPDIR=str(self.tmp))', "test_child_env_whitelist_and_token_absence", 1),
             ('diagnostic = self.safe(f"command spawn failed: {list(argv)}: {error}")', 'diagnostic = f"command spawn failed: {list(argv)}: {error}"', "test_spawn_errors_are_redacted_without_chain", 2)]
         for before, after, test, failures in mutations:

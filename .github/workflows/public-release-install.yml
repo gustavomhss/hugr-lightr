@@ -18,10 +18,11 @@ on:
         description: Existing release tag bound to the product commit
         required: true
         type: string
-# Explicit permission repair: reading a private draft requires push access;
+# Explicit permission repair: reading a draft requires push access;
 # contents: write supplies the app's draft-visibility role, not publication authority.
 # https://docs.github.com/en/rest/releases/releases#list-releases
-# Both native lanes failed GET releases/400899741 with contents: read:
+# Historical pre-migration evidence: both native lanes failed
+# GET releases/400899741 with contents: read in the former repository:
 # https://github.com/gmhelmold/hugr-lightr/actions/runs/36877718655
 # G-PUBLISH still requires owner review; the fixed transport issues only GETs.
 # Native-run receipts prove draft access; actions: read binds producer proof.
