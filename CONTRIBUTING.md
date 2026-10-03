@@ -82,6 +82,15 @@ if your change affects a row, update the row in the same PR.
 
 ## PR expectations
 
+- Integrate one cohesive change with its tests and documentation; do not open
+  separate PRs for each helper or review correction. Use directed tests and a
+  warmed build during iteration, then resolve cold review before activating the
+  full merge-candidate CI. Changed candidates still require fresh checks.
+- `benchmark-evidence` runs on PRs, main pushes and manual dispatch, not feature
+  branch pushes. Updated PRs cancel superseded runs of the same workflow/PR;
+  main and manual executions remain independent. Cancelled old heads are not
+  green qualification for the current candidate.
+
 - Branch → PR → merge; gates green before merge. Keep PRs scoped to one
   concern.
 - Say **what** changed and **why** (link the ADR/issue/parity row).

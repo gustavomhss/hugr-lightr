@@ -24,6 +24,13 @@ use assert_cmd::cargo::cargo_bin;
 use common::lightr_cmd;
 use tempfile::TempDir;
 
+#[path = "acceptance_net/probe_tests.rs"]
+mod probe_tests;
+
+#[cfg(unix)]
+#[path = "acceptance_net/reserved_target.rs"]
+mod reserved_target;
+
 // ---------------------------------------------------------------------------
 // Guard: stop a detached run on Drop so no process/forwarder is leaked.
 // ---------------------------------------------------------------------------
@@ -93,22 +100,22 @@ fn net_port_pair_selects_distinct_nonzero_ports() {
 
 /// Try one HTTP GET / through `127.0.0.1:port`; return the response bytes on
 /// success (connect + write + any bytes read back), else None.
-fn http_probe(port: u16) -> Option<Vec<u8>> {
-    let mut stream = TcpStream::connect(("127.0.0.1", port)).ok()?;
+fn http_probe(port: u16, deadline: Instant) -> Option<Vec<u8>> {
+    let remaining = deadline.checked_duration_since(Instant::now())?;
+    let address = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+    let mut stream = TcpStream::connect_timeout(&address, remaining).ok()?;
     stream
-        .set_read_timeout(Some(Duration::from_millis(800)))
-        .ok();
-    stream
-        .set_write_timeout(Some(Duration::from_millis(800)))
-        .ok();
+        .set_write_timeout(Some(deadline.checked_duration_since(Instant::now())?))
+        .ok()?;
     stream
         .write_all(b"GET / HTTP/1.0\r\nHost: 127.0.0.1\r\n\r\n")
         .ok()?;
-    stream.flush().ok();
+    stream.flush().ok()?;
     let mut buf = Vec::new();
     // Read whatever the server sends before it closes / times out.
     let mut chunk = [0u8; 4096];
-    loop {
+    while let Some(remaining) = deadline.checked_duration_since(Instant::now()) {
+        stream.set_read_timeout(Some(remaining)).ok()?;
         match stream.read(&mut chunk) {
             Ok(0) => break,
             Ok(n) => {
@@ -131,10 +138,12 @@ fn http_probe(port: u16) -> Option<Vec<u8>> {
 fn poll_http(port: u16, timeout: Duration) -> Option<Vec<u8>> {
     let deadline = Instant::now() + timeout;
     while Instant::now() < deadline {
-        if let Some(resp) = http_probe(port) {
+        if let Some(resp) = http_probe(port, deadline) {
             return Some(resp);
         }
-        std::thread::sleep(Duration::from_millis(100));
+        std::thread::sleep(
+            Duration::from_millis(100).min(deadline.saturating_duration_since(Instant::now())),
+        );
     }
     None
 }
@@ -246,28 +255,29 @@ fn net_foreground_published_run_is_reachable_then_torn_down() {
 
     let home = TempDir::new().unwrap();
     let ws = TempDir::new().unwrap();
+    #[cfg(unix)]
+    let (mut command, reservation, host_port, container_port) =
+        reserved_target::prepare(&cargo_bin("lightr"), ws.path());
+    #[cfg(not(unix))]
     let (host_port, container_port) = free_port_pair();
+    #[cfg(not(unix))]
     let publish = format!("127.0.0.1:{host_port}:{container_port}");
+    #[cfg(not(unix))]
     let cp = container_port.to_string();
     // Serve exactly one request, then exit normally. This proves normal workload
     // exit drops the foreground-owned forwarder without leaving a child behind.
+    #[cfg(not(unix))]
     let server = format!(
         "from http.server import SimpleHTTPRequestHandler; from socketserver import TCPServer; \
          server = TCPServer(('127.0.0.1', {container_port}), SimpleHTTPRequestHandler); \
          server.timeout = 5; server.handle_request()"
     );
-    let mut child = std::process::Command::new(cargo_bin("lightr"))
-        .env("LIGHTR_HOME", home.path())
-        .env_remove("HTTP_PROXY")
-        .env_remove("HTTPS_PROXY")
-        .env_remove("ALL_PROXY")
-        .env_remove("http_proxy")
-        .env_remove("https_proxy")
-        .env_remove("all_proxy")
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .args([
+    #[cfg(not(unix))]
+    let mut command = {
+        let mut command = std::process::Command::new(cargo_bin("lightr"));
+        command.args([
             "run",
+            "--explain",
             "-p",
             &publish,
             "--dir",
@@ -277,17 +287,37 @@ fn net_foreground_published_run_is_reachable_then_torn_down() {
             "-c",
             &server,
             &cp,
-        ])
-        .spawn()
-        .expect("foreground run -p must launch");
+        ]);
+        command
+    };
+    command
+        .env("LIGHTR_HOME", home.path())
+        .env_remove("HTTP_PROXY")
+        .env_remove("HTTPS_PROXY")
+        .env_remove("ALL_PROXY")
+        .env_remove("http_proxy")
+        .env_remove("https_proxy")
+        .env_remove("all_proxy")
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    #[cfg(unix)]
+    drop(reservation); // only host is rebound by lightr; target remains owned through stdin/exec
+    let mut child = command.spawn().expect("foreground run -p must launch");
 
     let response = poll_http(host_port, Duration::from_secs(8));
     let failure = if response.is_none() {
-        child
+        if let Some(status) = child
             .try_wait()
             .expect("foreground run status must be readable")
-            .map(|status| format!("exited {status}"))
-            .unwrap_or_else(|| "still running".to_string())
+        {
+            let output = child.wait_with_output().expect("exited workload output");
+            panic!(
+                "foreground host port {host_port}, target {container_port}: exited {status}; stdout={:?}; stderr={:?}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        "still running".to_string()
     } else {
         String::new()
     };
