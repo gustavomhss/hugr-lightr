@@ -37,4 +37,4 @@ def harness_identity(script, git_head, tracked_status):
     directory = Path(script).resolve().parent
     return {"git_sha": git_head, "tracked_clean": True, "repo_root": str(directory.parents[1]),
             "file_sha256": {name: hashlib.sha256((directory / name).read_bytes()).hexdigest()
-                            for name in ("campaign.py", "evidence.py", "deadline.py")}}
+                             for name in ("campaign.py", "evidence.py", "deadline.py", "commands.py")}}

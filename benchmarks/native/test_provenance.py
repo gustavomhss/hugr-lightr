@@ -45,7 +45,7 @@ class ProvenanceTests(unittest.TestCase):
             root = Path(temporary).resolve()
             directory = root / 'benchmarks/native'
             directory.mkdir(parents=True)
-            for name in ('campaign.py', 'evidence.py', 'deadline.py'):
+            for name in ('campaign.py', 'evidence.py', 'deadline.py', 'commands.py'):
                 (directory / name).write_bytes(name.encode())
             (root / 'product').mkdir()
             (root / 'output.json').write_text('untracked output')
@@ -53,6 +53,6 @@ class ProvenanceTests(unittest.TestCase):
             self.assertEqual(result['repo_root'], str(root))
             self.assertEqual(result['git_sha'], 'a' * 40)
             self.assertEqual(result['file_sha256'], {name: hashlib.sha256(name.encode()).hexdigest()
-                             for name in ('campaign.py', 'evidence.py', 'deadline.py')})
+                             for name in ('campaign.py', 'evidence.py', 'deadline.py', 'commands.py')})
             with self.assertRaisesRegex(ValueError, 'harness worktree is dirty'):
                 harness_identity(directory / 'campaign.py', 'a' * 40, ' M campaign.py')
