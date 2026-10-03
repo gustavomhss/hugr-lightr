@@ -20,6 +20,15 @@ from provenance import harness_identity, validate_receipt
 
 SCENARIOS = ("snapshot-cold", "snapshot-warm", "hydrate", "direct", "memo-miss",
              "memo-hit", "input-invalidation", "failed-command")
+
+
+def scenario_selection(value):
+    selected = value.split(",")
+    require(selected and all(name in SCENARIOS for name in selected) and
+            len(set(selected)) == len(selected), "scenarios must be nonempty, known and unique")
+    return tuple(selected)
+
+
 WORK = """import hashlib, sys
 from pathlib import Path
 data = Path(sys.argv[1]).read_bytes()
@@ -54,9 +63,11 @@ def fixture(path, size):
 class Campaign(Commands):
     def __init__(self, args, out):
         self.args, self.out = args, out
+        self.scenarios = scenario_selection(getattr(args, "scenarios", ",".join(SCENARIOS)))
         self.rows, self.sequence, self.roots = [], 0, {}
         self.context = {"size": None, "scenario": "preflight", "iteration": -1}
         self.meta = {"source_sha": args.source_sha, "options": vars(args), "status": "running",
+                     "scenarios": self.scenarios,
                      "started_unix_ns": time.time_ns(),
                      "scope": "Lightr native only; reproducibility, not a sandbox",
                      "cold": "fresh CAS/index/home; OS caches NOT flushed",
@@ -245,7 +256,7 @@ class Campaign(Commands):
         require(control["max_rss_kib"] > 0 and control["wall_ns"] > 0, "GNU-time control saw no usage")
         self.accept(control)
         for size, golden in datasets.items():
-            for scenario in SCENARIOS:
+            for scenario in self.scenarios:
                 for i in range(self.args.warmups + self.args.rounds):
                     phase = "warmup" if i < self.args.warmups else "sample"
                     self.context = {"size": size, "scenario": scenario,
@@ -254,10 +265,10 @@ class Campaign(Commands):
                     self.case(self.out / "fixtures" / str(size), golden, phase)
         self.context = {"size": None, "scenario": "postflight", "iteration": -1}
         self.binding()
-        coverage(self.rows, self.sizes, self.args.rounds, SCENARIOS)
+        coverage(self.rows, self.sizes, self.args.rounds, self.scenarios)
         summary = {}
         for size in self.sizes:
-            for scenario in SCENARIOS:
+            for scenario in self.scenarios:
                 rows = [r for r in self.rows if r["phase"] == "sample"
                         and r["size"] == size and r["scenario"] == scenario]
                 summary[f"{size}/{scenario}"] = {metric: summarize([r[metric] for r in rows])
@@ -277,7 +288,9 @@ def main():
     parser.add_argument("--rounds", type=int, default=21)
     parser.add_argument("--warmups", type=int, default=2)
     parser.add_argument("--sizes", default="1000,10000")
+    parser.add_argument("--scenarios", default=",".join(SCENARIOS))
     args = parser.parse_args()
+    scenario_selection(args.scenarios)
     out = Path(args.out).absolute()
     require(not out.is_symlink() and (not out.exists() or out.is_dir() and not any(out.iterdir())),
             "output must be a new or empty nonsymlink directory")

@@ -79,7 +79,8 @@ pub fn scan(root: &Path, index: &mut Index) -> Result<WalkReport> {
 
     let canonical_root = root.canonicalize().map_err(LightrError::Io)?;
 
-    // Collect walk candidates sequentially (ignore::Walk isn't Send easily)
+    // Keep ignore traversal sequential; metadata queries for large trees can
+    // share the existing Rayon pool without changing traversal/filter policy.
     let mut candidates: Vec<WalkCandidate> = Vec::new();
 
     let walker = WalkBuilder::new(&canonical_root)
@@ -98,20 +99,22 @@ pub fn scan(root: &Path, index: &mut Index) -> Result<WalkReport> {
         })
         .build();
 
-    for result in walker {
-        let entry = match result {
-            Ok(e) => e,
-            Err(_) => continue, // ignore walk errors
-        };
-
-        let abs_path = entry.path().to_path_buf();
-
-        // Skip the root itself
-        if abs_path == canonical_root {
-            continue;
-        }
-
-        let meta = match abs_path.symlink_metadata() {
+    let paths: Vec<PathBuf> = walker
+        .filter_map(std::result::Result::ok)
+        .map(|entry| entry.into_path())
+        .filter(|path| path != &canonical_root)
+        .collect();
+    let metadata: Vec<_> = if paths.len() >= 2048 {
+        paths
+            .par_iter()
+            .with_min_len(128)
+            .map(|path| path.symlink_metadata())
+            .collect()
+    } else {
+        paths.iter().map(|path| path.symlink_metadata()).collect()
+    };
+    for (abs_path, meta) in paths.into_iter().zip(metadata) {
+        let meta = match meta {
             Ok(m) => m,
             Err(_) => continue,
         };
@@ -308,3 +311,7 @@ pub fn scan(root: &Path, index: &mut Index) -> Result<WalkReport> {
 #[cfg(all(test, unix))]
 #[path = "scan_path_tests.rs"]
 mod path_tests;
+
+#[cfg(all(test, unix))]
+#[path = "scan_metadata_tests.rs"]
+mod metadata_tests;

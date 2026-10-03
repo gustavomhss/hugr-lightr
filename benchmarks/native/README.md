@@ -47,3 +47,67 @@ python3 benchmarks/native/preflight.py
 python3 benchmarks/native/build.py --source-dir "$PWD/product" --source-sha 64db16ac29664ee9078f96b6f30ee9ca7b03174d --out "$PWD/native-build.json"
 python3 benchmarks/native/campaign.py --binary "$PWD/product/target/release/lightr" --source-dir "$PWD/product" --source-sha 64db16ac29664ee9078f96b6f30ee9ca7b03174d --build-receipt "$PWD/native-build.json" --rounds 21 --warmups 2 --sizes 1000,10000 --out "$PWD/native-results"
 ```
+
+## Cache calibration: parallel metadata candidate
+
+[Same-runner A/B run 37156020089](https://github.com/gusmhs/hugr-lightr/actions/runs/37156020089)
+compared baseline `1e9e022a7d899a70b3d2955f0669b21cfa9ffabc` with candidate
+`df293e7ebfa322611e1c9434c67bdb33f7c4f412`. Both used clean locked Rust 1.96.0
+release builds. Hardware: GitHub-hosted Linux x86_64, AMD EPYC 9V74, four logical
+CPUs, Ubuntu 24.04.5, kernel `6.17.0-1022-azure`. These numbers compare variants
+on this host, not against the earlier Xeon campaign.
+
+The candidate preserves the sequential ignore-aware traversal and indexed result
+order, using the existing Rayon pool for metadata queries on trees with at least
+2048 selected paths. Small trees stay serial. Input/stat validation, manifest/key
+formats and index publication remain; temporary path/metadata vectors cost memory.
+
+Both variants ran 21 samples plus two warmups per size/scenario (126 measured
+samples each), baseline blocks before candidate blocks, not randomized. All
+samples were retained; none exceeded the declared overload threshold. The direct
+Python workload is unchanged. Median / p95 wall time, **milliseconds**:
+
+| Files / scenario | Baseline | Candidate |
+|---|---:|---:|
+| 1k direct | 32.674 / 33.112 | 32.849 / 33.111 |
+| 1k MISS | 44.562 / 45.741 | 45.256 / 47.843 |
+| 1k HIT | 8.227 / 8.345 | 8.096 / 8.411 |
+| 10k direct | 33.065 / 33.850 | 33.222 / 35.207 |
+| 10k MISS | 109.900 / 177.676 | 93.193 / 96.023 |
+| 10k HIT | 49.537 / 50.960 | 31.933 / 34.690 |
+
+10k HIT median improved 35.5%; its median peak RSS rose from 13,056 to 13,864 KiB.
+The 1k MISS p95 rose 4.6%, within the predeclared 5% control limit. Full raw
+distributions, including high-tail MISS samples, remain in the artifact; no
+universal speedup or other-platform qualification follows from this run.
+
+Untimed real-binary guards verified baseline-created cache replay by the candidate
+and reverse replay, content/mode/symlink/explicit-env invalidation and repeated
+exit-7 execution. Large-tree Rust controls also cover ignore rules, current modes,
+raw link targets and racily-clean rehashing.
+
+[Shared-path qualification 37156854301](https://github.com/gusmhs/hugr-lightr/actions/runs/37156854301)
+subsequently completed all eight scenarios (336 samples) at source/harness
+`25fd8bd0e7f59687d84aa0aa395c554f0cb8722a`, whose runtime matches the A/B candidate.
+Independent artifact checks verified exact coverage, deterministic goldens,
+memo/counters, raw logs and recomputed statistics with corruption controls.
+This separate GitHub runner reported AMD EPYC 7763 / four logical CPUs; it is
+functional/shared-path qualification, not a same-host comparison with the A/B.
+[Artifact 11285618765](https://github.com/gusmhs/hugr-lightr/actions/runs/37156854301/artifacts/11285618765),
+ZIP SHA-256 `8801fab3b07c8c188d51897816d0a9496267f95f905385fb4faee563d6bdc5d8`.
+
+[Artifact 11285547335](https://github.com/gusmhs/hugr-lightr/actions/runs/37156020089/artifacts/11285547335):
+ZIP SHA-256 `0012b26cbc3c7e22746bfbc5b52b163d22bf8cb713d00d1de6360d825c97d98a`.
+Download while retained; build receipts, hardware, compatibility outputs, raw
+samples, summaries and byte logs identify both exact variants.
+
+To reproduce the reduced experiment, use a clean harness checkout at
+`25fd8bd0e7f59687d84aa0aa395c554f0cb8722a` or a later revision with `--scenarios`.
+Use the build/measurement commands above for each source in separate worktrees
+on the same host; build both before timing,
+then add `--scenarios direct,memo-miss,memo-hit` to each campaign invocation.
+`--scenarios` defaults to all eight cases; an explicit subset must be nonempty,
+known and unique. Metadata and exact sample coverage bind the selection.
+Run `python3 benchmarks/native/compatibility.py --base BASE_BINARY --candidate
+CANDIDATE_BINARY --out NEW_DIRECTORY` for the untimed guards. Existing source
+receipts are historical evidence, not proof of a newly built candidate.

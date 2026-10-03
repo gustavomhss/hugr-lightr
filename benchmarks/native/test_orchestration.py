@@ -6,11 +6,18 @@ from pathlib import Path
 import sys
 from unittest.mock import patch
 
-from campaign import Campaign, fixture, main
+from campaign import Campaign, SCENARIOS, fixture, main, scenario_selection
 from test_deadline import FAMILY, coordinate
 
 
 class FixtureTests(unittest.TestCase):
+    def test_scenario_selection_rejects_empty_unknown_and_duplicates(self):
+        self.assertEqual(scenario_selection(",".join(SCENARIOS)), SCENARIOS)
+        self.assertEqual(scenario_selection("direct,memo-hit"), ("direct", "memo-hit"))
+        for value in ("", "memo-hit,", "unknown", "memo-hit,memo-hit", " direct"):
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, "nonempty, known and unique"):
+                scenario_selection(value)
+
     def test_unique_deterministic_payloads_and_modes(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
