@@ -16,7 +16,7 @@
 mod common;
 
 use std::io::{Read, Write};
-use std::net::TcpStream;
+use std::net::{TcpListener, TcpStream};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -64,10 +64,31 @@ fn python3_available() -> bool {
         .unwrap_or(false)
 }
 
-/// Pick a free localhost TCP port by binding :0 and releasing it.
-fn free_port() -> u16 {
-    let l = std::net::TcpListener::bind("127.0.0.1:0").expect("bind ephemeral");
-    l.local_addr().unwrap().port()
+/// Select distinct localhost ports while both listeners are bound.
+/// The listeners are released before return; the ports are not reserved afterward.
+fn free_port_pair() -> (u16, u16) {
+    let host = TcpListener::bind("127.0.0.1:0").expect("bind ephemeral host port");
+    let container = TcpListener::bind("127.0.0.1:0").expect("bind ephemeral container port");
+    (
+        host.local_addr().unwrap().port(),
+        container.local_addr().unwrap().port(),
+    )
+}
+
+#[test]
+fn net_port_pair_selects_distinct_nonzero_ports() {
+    for _ in 0..16 {
+        let (host_port, container_port) = free_port_pair();
+        assert_ne!(host_port, 0, "host port must be selected by the OS");
+        assert_ne!(
+            container_port, 0,
+            "container port must be selected by the OS"
+        );
+        assert_ne!(
+            host_port, container_port,
+            "published ports must be distinct"
+        );
+    }
 }
 
 /// Try one HTTP GET / through `127.0.0.1:port`; return the response bytes on
@@ -147,9 +168,7 @@ fn net_published_run_is_reachable_then_torn_down() {
     let home = TempDir::new().unwrap();
     let ws = TempDir::new().unwrap();
 
-    // High ephemeral ports to avoid clashes.
-    let host_port = free_port().max(39000);
-    let container_port = free_port().max(39001);
+    let (host_port, container_port) = free_port_pair();
 
     // Start a detached published run: server binds 127.0.0.1:<container_port>,
     // forwarder publishes 127.0.0.1:<host_port> → it.
@@ -227,8 +246,7 @@ fn net_foreground_published_run_is_reachable_then_torn_down() {
 
     let home = TempDir::new().unwrap();
     let ws = TempDir::new().unwrap();
-    let host_port = free_port();
-    let container_port = free_port();
+    let (host_port, container_port) = free_port_pair();
     let publish = format!("127.0.0.1:{host_port}:{container_port}");
     let cp = container_port.to_string();
     // Serve exactly one request, then exit normally. This proves normal workload
