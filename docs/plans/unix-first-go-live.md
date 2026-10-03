@@ -1,5 +1,10 @@
 # Unix-First Release DAG
 
+> Historical 0.1.1 plan and evidence context. Former repository/owner IDs and
+> command examples below are archived provenance, not current operational steps.
+> Use [the current-owner release runbook](../RELEASE.md) for future execution;
+> migration does not transfer old source qualification or publication rights.
+
 **Status:** Frozen release-verification plan. Documentation only; it authorizes
 neither a tag, publication, nor a release claim.
 

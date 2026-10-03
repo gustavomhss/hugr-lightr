@@ -1,6 +1,6 @@
 # 30 ms cold starts and ~2,000× memoized re-runs: benchmarking a container runtime, honestly
 
-*July 2026 · [lightr](https://github.com/HumanGuardrail/hugr-lightr) — a daemonless, CAS-native container runtime in Rust*
+*July 2026 · [lightr](https://github.com/gusmhs/hugr-lightr) — a daemonless, CAS-native container runtime in Rust*
 
 I'm building a container runtime on one thesis: **don't run containers faster — make most of the work other runtimes do cease to exist.** No daemon (nothing runs when nothing runs). No images (content-addressed files, hydrated lazily, copy-on-write). And memoization first: if the action cache has seen this exact work before, the answer returns without the work happening.
 
@@ -62,4 +62,4 @@ That's the layer lightr occupies: the runtime under agent sandboxes, where redun
 gh workflow run benchmark.yml --ref main -f iterations=100
 ```
 
-on [the repo](https://github.com/HumanGuardrail/hugr-lightr) — results land in the job summary and the `bench-results` artifact. The Linux ledger is [docs/benchmarks/RESULTS.md](../benchmarks/RESULTS.md); macOS app-level numbers (install footprint 452×, 1 GB hydrate 119×, measured on a named Intel Mac) are in [docs/spec/benchmark-results.md](../spec/benchmark-results.md). If you find a hole in the method, open an issue — the harness exists to be attacked.
+on [the repo](https://github.com/gusmhs/hugr-lightr) — results land in the job summary and the `bench-results` artifact. The Linux ledger is [docs/benchmarks/RESULTS.md](../benchmarks/RESULTS.md); macOS app-level numbers (install footprint 452×, 1 GB hydrate 119×, measured on a named Intel Mac) are in [docs/spec/benchmark-results.md](../spec/benchmark-results.md). If you find a hole in the method, open an issue — the harness exists to be attacked.

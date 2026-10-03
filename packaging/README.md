@@ -32,7 +32,8 @@ tries signed name first, then only explicit `-unsigned` name.
 
 Installer and formula now configure `0.1.1` delivery from
 [gusmhs/hugr-lightr](https://github.com/gusmhs/hugr-lightr/releases/tag/v0.1.1).
-Downloads depend on restoration of identical historical assets; version selectors,
+Identical historical assets are restored publicly as release `402204175` at
+`2026-10-03T00:36:31Z`; all five anonymous asset hashes matched. Version selectors,
 artifact names, hashes, platform guards, and unsigned semantics are unchanged.
 Historical 0.1.1 retains the native `-e` bug; the source fix is on `main`
 ([ADR-0023](../docs/adr/0023-native-explicit-env-cache.md)), with 0.1.2 qualification pending.

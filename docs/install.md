@@ -12,8 +12,8 @@ codesign the binary with the virtualization entitlement.
 > but **still has the native `-e` bug**: explicit environment values are keyed but
 > not applied to the foreground child. The source fix is on `main`
 > ([ADR-0023](adr/0023-native-explicit-env-cache.md)); **0.1.2 qualification is
-> pending**. Identical 0.1.1 GitHub assets are being restored under the new repo;
-> installer/formula downloads depend on that restoration. Build from `main` for
+> pending**. Identical 0.1.1 GitHub assets are restored under the new repo; five
+> anonymous downloads matched original hashes (release 402204175). Build from `main` for
 > the fix; `cargo install hugr-lightr --version 0.1.1 --locked` still selects the
 > historical package, not the fix. Public artifact support remains Linux x86_64
 > and macOS arm64 only; macOS artifacts remain unsigned/ad-hoc, not notarized,
@@ -230,12 +230,12 @@ agent surface) is the same code on every platform and is fully tested.
   metadata evaluation is not evidence of an actual Homebrew install.
 - **`curl | sh` installer** — [`packaging/install.sh`](../packaging/install.sh)
   selects 0.1.1 under the new repo and verifies the matching artifact checksum.
-  Both installer and formula depend on identical asset restoration.
+  Both installer and formula select restored identical historical assets.
 - **crates.io** — the eleven intended 0.1.1 packages were published
   ([publication receipt](plans/unix-first-go-live/evidence/R4-crates-publication.md));
   the CLI package is `hugr-lightr`, binary `lightr`. Published 0.1.1 is unchanged.
 - **GitHub Releases** — [v0.1.1](https://github.com/gusmhs/hugr-lightr/releases/tag/v0.1.1)
-  is the restoration target for the original bytes, not a rebuilt bug fix.
+  contains restored original bytes, not a rebuilt bug fix.
   Public artifacts remain Linux x86_64 and macOS arm64 only; the macOS artifact
   is explicitly `-unsigned` (ad-hoc, no Developer ID, not notarized).
 

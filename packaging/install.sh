@@ -5,7 +5,7 @@ set -eu
 
 # Historical delivery approval: https://github.com/gmhelmold/hugr-lightr/issues/187#issuecomment-5945719224
 # Migration target: identical historical v0.1.1 assets, not rebuilt binaries.
-# Downloads depend on asset restoration; 0.1.1 retains the native -e bug.
+# Original assets restored as release 402204175; 0.1.1 retains the native -e bug.
 RELEASES_URL='https://github.com/gusmhs/hugr-lightr/releases/download'
 VERSION='0.1.1'
 

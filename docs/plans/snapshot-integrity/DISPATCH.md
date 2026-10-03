@@ -1,5 +1,11 @@
 # Snapshot integrity — current execution and integration state
 
+> Historical technical state retained across repository migration. Active owner
+> and campaign are [gusmhs/hugr-lightr #5](https://github.com/gusmhs/hugr-lightr/issues/5);
+> recovered issue numbers use the [issue map](../../migration/issue-map.jsonl);
+> original PR references remain archival.
+> This migration does not renew execution authority or qualify unfinished work.
+
 **Updated:** 2026-09-19. **Campaign:** #152. **Integration:** PR #146,
 `fix/snapshot-integrity`; main remains unchanged by this campaign.
 **Technical contract:** [v2.2](../SNAPSHOT-INTEGRITY-REMEDIATION.md) at

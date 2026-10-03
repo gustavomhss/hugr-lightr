@@ -1,6 +1,12 @@
 # Snapshot integrity remediation — execution specification v2.2
 
-**Repository:** `gmhelmold/hugr-lightr`  
+**Repository:** `gusmhs/hugr-lightr`
+
+> Migration note: active campaign tracking is [issue #5](https://github.com/gusmhs/hugr-lightr/issues/5);
+> recovered package IDs are in [the issue map](../migration/issue-map.jsonl).
+> Original numbered references, approvals and evidence below retain historical
+> repository context; they are not new execution authorization or current links.
+
 **Date:** 2026-09-16  
 **Integration branch / PR:** `fix/snapshot-integrity` / [#146](https://github.com/gmhelmold/hugr-lightr/pull/146)  
 **Revision scope:** planning documents and execution packets only. This revision does not implement or validate Rust fixes.  

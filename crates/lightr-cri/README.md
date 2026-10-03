@@ -65,5 +65,5 @@ The real backend composition lives in the parent repository's
 
 Apache-2.0 © HumanGuardrail Ltda.
 
-[hugr-lightr]: https://github.com/HumanGuardrail/hugr-lightr
-[bench]: https://github.com/HumanGuardrail/hugr-lightr/blob/main/docs/benchmarks/RESULTS.md
+[hugr-lightr]: https://github.com/gusmhs/hugr-lightr
+[bench]: https://github.com/gusmhs/hugr-lightr/blob/main/docs/benchmarks/RESULTS.md

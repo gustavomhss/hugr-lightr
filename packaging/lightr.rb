@@ -1,7 +1,7 @@
 # lightr.rb — Unix-first Homebrew formula.
 #
 # Historical delivery approval: gmhelmold/hugr-lightr #187/comment5945719224.
-# Migrated URLs require identical asset restoration; 0.1.1 retains native -e bug.
+# Migrated URLs serve identical restored assets; 0.1.1 retains native -e bug.
 # Initial public matrix has macOS arm64 and Linux x86_64 only.
 
 class Lightr < Formula
