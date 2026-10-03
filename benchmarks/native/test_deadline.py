@@ -154,6 +154,18 @@ class DeadlineTests(unittest.TestCase):
                 self.assertEqual(process_state(group), "gone")
                 self.assert_stopped(grandchild)
 
+    def test_nonzero_leader_with_redirected_descendant_is_cleaned(self):
+        code = FAMILY.replace("start_new_session=escape == 'yes'", "start_new_session=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL").replace("os._exit(0)", "os._exit(7)")
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            with coordinate(root):
+                result = execute([PYTHON, '-I', '-c', code, 'no', 'no'], self.env(root), root)
+                self.assertEqual(result.returncode, 7)
+                self.assertFalse(result.timed_out)
+                self.assertEqual(result.stderr, b"retained stderr\n")
+                facts = json.loads((root / 'identity.json').read_text())
+                self.assert_stopped(facts['child'])
+
     def test_original_exception_is_preserved_with_retained_output(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

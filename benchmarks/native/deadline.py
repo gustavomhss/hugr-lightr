@@ -90,6 +90,8 @@ def execute(argv, env, cwd, timeout_s=120):
             original.stdout, original.stderr = stdout, stderr
             original.pid, original.returncode = child.pid, child.returncode
             raise
+        if child.returncode != 0 and not timed_out:
+            stdout, stderr, group_gone = _recover(child)
     finally:
         _close_pipes(child)
     return _Outcome(child.pid, child.returncode, stdout, stderr, timed_out, group_gone)

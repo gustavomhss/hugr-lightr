@@ -1,0 +1,84 @@
+name: Native representative benchmark
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Frozen product source (not benchmark harness revision)
+        required: true
+        default: 64db16ac29664ee9078f96b6f30ee9ca7b03174d
+        type: string
+      rounds:
+        description: Measured rounds per scenario and dataset (minimum 3)
+        required: true
+        default: '21'
+        type: string
+      warmups:
+        description: Untimed-for-summary warmup rounds
+        required: true
+        default: '2'
+        type: string
+      sizes:
+        description: Comma-separated file counts; unique 4 KiB files
+        required: true
+        default: '1000,10000'
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: native-representative-benchmark
+  cancel-in-progress: false
+jobs:
+  native:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      SOURCE_SHA: ${{ inputs.source_sha }}
+      ROUNDS: ${{ inputs.rounds }}
+      WARMUPS: ${{ inputs.warmups }}
+      SIZES: ${{ inputs.sizes }}
+      CARGO_HTTP_MULTIPLEXING: 'false'
+      CARGO_INCREMENTAL: '0'
+      RUSTFLAGS: '-D warnings'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Validate selected source syntax
+        run: |
+          set -euo pipefail
+          python3 -c 'import os,re,sys; valid = re.fullmatch(r"[0-9a-f]{40}", os.environ["SOURCE_SHA"]) and re.fullmatch(r"[0-9]+", os.environ["ROUNDS"]) and int(os.environ["ROUNDS"]) >= 3 and re.fullmatch(r"[0-9]+", os.environ["WARMUPS"]) and re.fullmatch(r"[1-9][0-9]*(,[1-9][0-9]*)*", os.environ["SIZES"]); sys.exit(0 if valid and len(set(os.environ["SIZES"].split(","))) == len(os.environ["SIZES"].split(",")) else "invalid source/campaign options")' |& tee native-preflight.log
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ inputs.source_sha }}
+          path: product
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@ebb3d1676050bfd0971c36c1e215b5751473994d
+        with:
+          toolchain: 1.96.0
+      - name: Calibrate evidence controls
+        run: |
+          set -euo pipefail
+          python3 benchmarks/native/preflight.py |& tee native-campaign-preflight.log
+          python3 -m unittest discover -s benchmarks/native -p 'test_*.py' -v |& tee native-controls.log
+      - name: Build frozen release-profile CLI
+        run: python3 benchmarks/native/build.py --source-dir "$PWD/product" --source-sha "$SOURCE_SHA" --out "$PWD/native-build.json"
+      - name: Measure validated serial campaign
+        run: |
+          set -euo pipefail
+          python3 benchmarks/native/campaign.py --binary "$PWD/product/target/release/lightr" --source-dir "$PWD/product" --source-sha "$SOURCE_SHA" --build-receipt "$PWD/native-build.json" --rounds "$ROUNDS" --warmups "$WARMUPS" --sizes "$SIZES" --out "$PWD/native-results" |& tee native-campaign.log
+      - name: Preserve evidence including failures
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: native-campaign-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            native-build.json*
+            native-*.log
+            native-results/*.json
+            native-results/*.jsonl
+            native-results/*.md
+            native-results/logs/
+          if-no-files-found: error
+          retention-days: 30
