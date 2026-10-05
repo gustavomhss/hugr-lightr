@@ -82,15 +82,38 @@ fn probe_ns() -> EngineCaps {
     }
 }
 
-#[cfg(all(target_os = "macos", target_arch = "aarch64", feature = "vz"))]
+// ADR-0024 D6: vz run/boot works on every macOS arch (it was validated on Intel
+// x86_64, F-205). Only snapshot suspend/resume is arm64 + macOS 14, and that is
+// refused at its own call site (`SuspendResume::Unsupported`), never here.
+#[cfg(all(target_os = "macos", feature = "vz"))]
 fn probe_vz() -> EngineCaps {
-    let dir = pack_dir();
+    vz_pack_caps(&pack_dir())
+}
+
+#[cfg(not(all(target_os = "macos", feature = "vz")))]
+fn probe_vz() -> EngineCaps {
+    EngineCaps {
+        available: false,
+        detail: "vz engine requires macOS + the 'vz' build feature + a linux pack \
+                 — see 'lightr engine install-pack'"
+            .to_string(),
+    }
+}
+
+/// vz availability for a pack directory: both `kernel` and `initrd` present.
+/// The detail names whether snapshot suspend/resume exists on this host arch.
+#[cfg_attr(not(all(target_os = "macos", feature = "vz")), allow(dead_code))]
+fn vz_pack_caps(dir: &std::path::Path) -> EngineCaps {
     let kernel = dir.join("kernel");
     let initrd = dir.join("initrd");
     match (kernel.exists(), initrd.exists()) {
         (true, true) => EngineCaps {
             available: true,
-            detail: format!("vz engine ready (pack: {})", dir.display()),
+            detail: format!(
+                "vz engine ready (pack: {}); {}",
+                dir.display(),
+                VZ_SNAPSHOT_DETAIL
+            ),
         },
         (false, _) => EngineCaps {
             available: false,
@@ -109,15 +132,10 @@ fn probe_vz() -> EngineCaps {
     }
 }
 
-#[cfg(not(all(target_os = "macos", target_arch = "aarch64", feature = "vz")))]
-fn probe_vz() -> EngineCaps {
-    EngineCaps {
-        available: false,
-        detail: "vz snapshot engine requires macOS arm64 + macOS 14 + the 'vz' build feature + a linux pack \
-                 — see 'lightr engine install-pack'"
-            .to_string(),
-    }
-}
+#[cfg(target_arch = "aarch64")]
+const VZ_SNAPSHOT_DETAIL: &str = "snapshot suspend/resume: arm64 (also needs macOS 14+)";
+#[cfg(not(target_arch = "aarch64"))]
+const VZ_SNAPSHOT_DETAIL: &str = "snapshot suspend/resume: unavailable (arm64 + macOS 14+ only)";
 
 // ── probe_wsl (Windows isolation = WSL2) ────────────────────────────────────
 
@@ -189,5 +207,42 @@ fn probe_wsl() -> EngineCaps {
     EngineCaps {
         available: false,
         detail: format!("wsl engine requires Windows + WSL2 (this host is {os})"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn vz_pack_caps_requires_kernel_and_initrd_on_any_arch() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = vz_pack_caps(dir.path());
+        assert!(!missing.available && missing.detail.contains("missing kernel"));
+        std::fs::write(dir.path().join("kernel"), b"k").unwrap();
+        let no_initrd = vz_pack_caps(dir.path());
+        assert!(!no_initrd.available && no_initrd.detail.contains("missing initrd"));
+        std::fs::write(dir.path().join("initrd"), b"i").unwrap();
+        let ready = vz_pack_caps(dir.path());
+        assert!(ready.available, "{}", ready.detail);
+        assert!(ready.detail.contains("snapshot suspend/resume"));
+    }
+
+    /// #143 gated the whole vz probe on aarch64, disabling vz on Intel (the only
+    /// runtime-validated vz platform). The probe's cfg must not name an arch.
+    #[test]
+    fn vz_probe_cfg_is_not_arch_gated() {
+        let src = include_str!("probe.rs");
+        let implementation = &src[..src.find("#[cfg(test)]").unwrap()];
+        let gates: Vec<&str> = implementation
+            .lines()
+            .zip(implementation.lines().skip(1))
+            .filter(|(_, next)| next.starts_with("fn probe_vz()"))
+            .map(|(attr, _)| attr)
+            .collect();
+        assert_eq!(gates.len(), 2, "both probe_vz arms are cfg-gated");
+        for gate in gates {
+            assert!(!gate.contains("target_arch"), "arch-gated vz probe: {gate}");
+        }
     }
 }

@@ -268,7 +268,9 @@ mod vz_impl {
             //               the console marker (no virtiofs lag) → use directly;
             //   -2        = the VM stopped without a marker (guest crashed before
             //               printing) → fall back to the durable EXIT_FILE.
-            vz_status(vm_status, "run")?;
+            if let Some(code) = live_exit_code(vm_status)? {
+                return Ok(code);
+            }
 
             // ── 3. Fallback: read the guest's exit code from the rootfs share ──
             // Only reached when no console marker arrived. PID1 wrote EXIT_FILE
@@ -513,6 +515,20 @@ mod vz_impl {
         }
     }
 
+    /// Map `lightr_vz_run`'s return (contract in shim/vz.swift): `0..=255` is
+    /// the guest's real code from the console marker; `-2` means the VM stopped
+    /// without a marker, so the caller falls back to `EXIT_FILE`; `-1` and any
+    /// other value fail closed. #143 routed this through `vz_status`, which made
+    /// every non-zero guest exit an "unknown status" error and the `-2` fallback
+    /// an "unsupported host" error.
+    fn live_exit_code(vm_status: libc::c_int) -> Result<Option<i32>> {
+        match vm_status {
+            0..=255 => Ok(Some(vm_status)),
+            -2 => Ok(None),
+            status => vz_status(status, "run").map(|()| None),
+        }
+    }
+
     fn wait_for_file(path: &std::path::Path, operation: &str) -> Result<()> {
         for _ in 0..600 {
             if path.is_file() {
@@ -579,7 +595,7 @@ mod vz_impl {
 
     #[cfg(test)]
     mod tests {
-        use super::{vz_caps, vz_status, write_release_token};
+        use super::{live_exit_code, vz_caps, vz_status, write_release_token};
         use lightr_core::ResourceLimits;
         use lightr_init::SUSPEND_RELEASE_FILE;
 
@@ -632,6 +648,17 @@ mod vz_impl {
                 );
             }
             assert!(vz_status(-99, "test").is_err());
+        }
+
+        #[test]
+        fn run_returns_live_guest_codes_and_falls_back_only_on_no_marker() {
+            for code in [0, 1, 7, 127, 143, 255] {
+                assert_eq!(live_exit_code(code).unwrap(), Some(code));
+            }
+            assert_eq!(live_exit_code(-2).unwrap(), None, "-2 reads EXIT_FILE");
+            for status in [-1, -3, -4, -5, -6, -99, 256] {
+                assert!(live_exit_code(status).is_err(), "{status} must fail closed");
+            }
         }
 
         #[test]
@@ -729,11 +756,14 @@ mod tests {
             src.contains("EXIT_FILE") && src.contains("parse::<i32>()"),
             "VzEngine::run must read the exit code from EXIT_FILE"
         );
-        // The shim return is a lifecycle status (vm_status), only checked for
-        // failure — never returned directly as the exit code.
+        // The shim return goes through the live-marker mapping, which returns
+        // only 0..=255 marker codes and otherwise falls back to EXIT_FILE or
+        // fails. (Checked against the implementation, not this test's text.)
+        let implementation = &src[..src.find("\n    #[cfg(test)]").unwrap()];
         assert!(
-            src.contains("let vm_status") && src.contains("vm_status < 0"),
-            "the shim return must be handled as a lifecycle status (vm_status)"
+            implementation.contains("let vm_status")
+                && implementation.contains("live_exit_code(vm_status)?"),
+            "the shim return must go through live_exit_code"
         );
         // The honest no-report fallback is 255, explicitly NOT 0.
         assert!(
