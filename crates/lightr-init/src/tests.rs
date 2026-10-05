@@ -45,6 +45,14 @@ fn initspec_from_json_without_net_defaults_to_false() {
 /// A captured `spawn_wait` call: (command, cwd, env).
 type SpawnCall = (Vec<String>, String, Vec<(String, String)>);
 
+fn sample_gate() -> SuspendGate {
+    SuspendGate {
+        version: 1,
+        instance_id: "vz-1".to_string(),
+        release_token: "token-1".to_string(),
+    }
+}
+
 /// Records the lifecycle steps in order and returns configurable outcomes.
 struct FakeOps {
     steps: Vec<&'static str>,
@@ -53,6 +61,8 @@ struct FakeOps {
     spawned: Option<SpawnCall>,
     published: bool,
     released: bool,
+    /// The `pid_proof` gate `spawn_wait` was asked to prove (`None` = no proof).
+    pid_proof: Option<Option<SuspendGate>>,
     fail_at: Option<&'static str>, // "mount" | "read" | "enter"
 }
 
@@ -65,6 +75,7 @@ impl FakeOps {
             spawned: None,
             published: false,
             released: false,
+            pid_proof: None,
             fail_at: None,
         }
     }
@@ -77,6 +88,7 @@ impl FakeOps {
             spawned: None,
             published: false,
             released: false,
+            pid_proof: None,
             fail_at: None,
         }
     }
@@ -89,6 +101,7 @@ impl FakeOps {
             spawned: None,
             published: false,
             released: false,
+            pid_proof: None,
             fail_at: Some(step),
         }
     }
@@ -124,8 +137,10 @@ impl GuestOps for FakeOps {
         cmd: &[String],
         cwd: &str,
         env: &[(String, String)],
+        pid_proof: Option<&SuspendGate>,
     ) -> io::Result<i32> {
         self.steps.push("spawn");
+        self.pid_proof = Some(pid_proof.cloned());
         self.spawned = Some((cmd.to_vec(), cwd.to_string(), env.to_vec()));
         match &self.spawn_result {
             Ok(code) => Ok(*code),
@@ -139,10 +154,10 @@ impl GuestOps for FakeOps {
         Ok(())
     }
 
-    fn await_suspend_release(&mut self) -> io::Result<()> {
+    fn await_suspend_release(&mut self) -> io::Result<SuspendGate> {
         self.steps.push("release");
         self.released = true;
-        Ok(())
+        Ok(sample_gate())
     }
 }
 
@@ -299,4 +314,41 @@ fn run_init_errs_on_enter_rootfs_failure_and_reports_nothing() {
         "stopped at enter"
     );
     assert!(ops.spawned.is_none(), "never spawned after enter failure");
+}
+
+// ── ADR-0024 D6: the workload PID proof is gated on suspend_gate ───────
+
+#[test]
+fn ordinary_run_spawns_without_pid_proof_and_reports_real_code() {
+    let mut ops = FakeOps::spawning(7);
+    let mut sink = VecSink::default();
+    let rc = run_init(&mut ops, &mut sink).expect("ordinary run succeeds");
+    assert_eq!(
+        ops.pid_proof,
+        Some(None),
+        "no gate ⇒ no PID proof requested"
+    );
+    assert_eq!((rc, sink.reports), (7, vec![7]));
+}
+
+#[test]
+fn gated_run_proves_pid_with_the_released_gate() {
+    let mut ops = FakeOps::spawning(0);
+    ops.spec.suspend_gate = true;
+    let mut sink = VecSink::default();
+    run_init(&mut ops, &mut sink).expect("gated run succeeds");
+    assert_eq!(ops.pid_proof, Some(Some(sample_gate())));
+}
+
+/// Guest-side half of the same fix: the Linux PID1 `spawn_wait` must take the
+/// gate from its caller, never read SUSPEND_GATE_FILE itself (the file exists
+/// only for suspend, so reading it failed every ordinary run with 127).
+#[test]
+fn guest_spawn_wait_never_reads_the_gate_file() {
+    let bin = include_str!("bin/init.rs");
+    let start = bin.find("fn spawn_wait(").unwrap();
+    let end = start + bin[start..].find("fn publish_ip(").unwrap();
+    let body = &bin[start..end];
+    assert!(body.contains("if let Some(gate) = pid_proof"));
+    assert!(!body.contains("SUSPEND_GATE_FILE"));
 }
