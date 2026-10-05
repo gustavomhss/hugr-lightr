@@ -65,14 +65,14 @@ pub(super) fn network_flags_policy_error(
         );
         return Some(2);
     }
-    // `--add-host` is honored on vz (guest /etc/hosts) AND on the ns engine (the
-    // container rootfs /etc/hosts written in PID 1). It is rejected only where there
-    // is no container rootfs to write into — native (and vz without a rootfs).
-    if !runflags.add_host.is_empty() && !vz_container && engine != EngineKind::Ns {
+    // `--add-host` is honored on the ns engine (the container rootfs /etc/hosts
+    // written in PID 1). native has no container rootfs to write into; vz does not
+    // apply it yet and is refused earlier by `policy_vz` (ADR-0024).
+    if !runflags.add_host.is_empty() && engine != EngineKind::Ns {
         eprintln!(
-            "lightr: --add-host requires --engine ns or --engine vz --rootfs <img> \
-             (it writes the container's /etc/hosts; the native engine has no container \
-             rootfs to write)"
+            "lightr: --add-host requires --engine ns (it writes the container's \
+             /etc/hosts; the native engine has no container rootfs, and vz does not \
+             apply it yet)"
         );
         return Some(2);
     }

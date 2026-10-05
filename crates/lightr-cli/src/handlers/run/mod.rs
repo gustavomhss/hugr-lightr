@@ -32,6 +32,7 @@ mod helpers;
 mod parse;
 mod paths;
 pub(crate) mod policy;
+mod policy_vz;
 mod runflags;
 
 // Value parsers (`--tmpfs`/`--ulimit`/`size=`) split to `parse.rs` (godfile cap).
@@ -155,6 +156,21 @@ pub fn run(
     // `--tmpfs`/`--ulimit` on `vz` are honest-errored BEFORE provisioning (they'd
     // live inside the guest); ns/native handle them (see policy fn).
     if let Some(code) = policy::vz_mount_policy(engine_kind, &runflags) {
+        return code;
+    }
+    // ADR-0024 stage 2: vz drops env/user/volumes/workdir/hostname/DNS/hosts today;
+    // refuse them (exit 2) on the foreground and detached vz paths alike.
+    let vz_flags = policy_vz::VzFlagInputs {
+        env_set,
+        env_file,
+        env_keys,
+        user,
+        workdir,
+        mounts_raw,
+        runflags: &runflags,
+        rc: &rc,
+    };
+    if let Some(code) = policy_vz::vz_unapplied_flags_policy(engine_kind, &vz_flags) {
         return code;
     }
 
