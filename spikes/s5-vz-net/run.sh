@@ -31,7 +31,10 @@ esac
 
 HOST_PORT="${LIGHTR_S5NET_PORT:-18080}"
 EXPECT_BODY="lightr-vz-net"
-BIN="${REPO_ROOT}/target/debug/lightr"
+# LIGHTR_S5NET_BIN: an already-built `--features vz` binary (e.g. a release
+# build); Step 2 then skips the debug build. It is still codesigned in Step 3.
+BIN="${LIGHTR_S5NET_BIN:-${REPO_ROOT}/target/debug/lightr}"
+LIGHTR_DIR="${LIGHTR_HOME:-${HOME}/.lightr}"
 RUN_ID=""
 
 pass_count=0
@@ -69,7 +72,9 @@ log_pass
 
 # ── Step 2: build + codesign the vz CLI ───────────────────────────────────────
 log_step "Step 2: build lightr --features vz"
-cargo build --bin lightr --features vz >/tmp/s5net-build.log 2>&1 || log_fail "vz build failed (see /tmp/s5net-build.log)"
+if [ -z "${LIGHTR_S5NET_BIN:-}" ]; then
+    cargo build --bin lightr --features vz >/tmp/s5net-build.log 2>&1 || log_fail "vz build failed (see /tmp/s5net-build.log)"
+fi
 [ -x "${BIN}" ] || log_fail "binary not at ${BIN}"
 log_pass
 
@@ -84,9 +89,14 @@ log_pass
 # The guest PID1 must be THIS build (it publishes the IP on the net path). If a
 # pack is absent OR predates this source tree, rebuild + install one.
 log_step "Step 4: ensure linux pack (kernel + current lightr-init)"
-PACK_DIR="${LIGHTR_HOME:-${HOME}/.lightr}/packs/linux"
+PACK_DIR="${LIGHTR_DIR}/packs/linux"
 if [ ! -f "${PACK_DIR}/kernel" ] || [ ! -f "${PACK_DIR}/initrd" ]; then
     log_fail "no linux pack at ${PACK_DIR} — build one with scripts/build-linux-pack.sh (needs a kernel; see README) then 'lightr engine install-pack <dir>'"
+fi
+# VZ on x86_64 boots only a bzImage (setup header magic "HdrS" at 0x202); a
+# vmlinux ELF in the pack fails at boot with "Internal Virtualization error".
+if [ "${GUEST_ARCH}" = "x86_64" ] && [ "$(dd if="${PACK_DIR}/kernel" bs=1 skip=514 count=4 2>/dev/null)" != "HdrS" ]; then
+    log_fail "${PACK_DIR}/kernel is not a bzImage (VZ x86_64 rejects a vmlinux ELF) — install a pack built from scripts/build-kernel-x86.sh's bzImage"
 fi
 # Rebuild + reinstall the initrd from the current init so publish_ip is present.
 cargo zigbuild -p lightr-init --bin lightr-init --target "${GUEST_ARCH}-unknown-linux-musl" --release \
@@ -99,6 +109,12 @@ cargo run -q -p lightr-engine --example assemble-pack -- \
 "${BIN}" engine install-pack build/s5net-pack >/dev/null 2>&1 || log_fail "install-pack failed"
 log_pass
 
+# The supervisor binds <LIGHTR_HOME>/run/<id>/ctl.sock. macOS caps an AF_UNIX
+# path at 103 bytes; past that the bind fails, `stop` cannot reach the
+# supervisor and falls back to SIGKILL (137, status left `running`).
+[ $(( ${#LIGHTR_DIR} + 40 )) -le 103 ] \
+    || log_fail "LIGHTR_HOME path too long for ctl.sock (${#LIGHTR_DIR} bytes; keep it <= 63) — use a short path such as /tmp/lvz"
+
 # ── Step 5: ensure an alpine rootfs ref ───────────────────────────────────────
 log_step "Step 5: ensure 'alpine' rootfs ref"
 if ! "${BIN}" oci pull --name alpine alpine >/tmp/s5net-pull.log 2>&1; then
@@ -109,13 +125,20 @@ log_pass
 # ── Step 6: launch the published container ────────────────────────────────────
 # A minimal HTTP server in busybox: each connection gets a fixed 200 response.
 log_step "Step 6: run -d -p ${HOST_PORT}:80 --engine vz --rootfs alpine"
+# Host-NAT context for Step 7's diagnosis: VZNATNetworkDeviceAttachment starts
+# macOS InternetSharing (vmnet + bridge100 + bootpd) on demand. Cold and on a
+# loaded host that bring-up has taken 16 s and more (EXPECTED.md, "Host NAT").
+NAT_WARM="$(pgrep -x InternetSharing >/dev/null 2>&1 && echo warm || echo cold)"
+RUN_START="$(date '+%Y-%m-%d %H:%M:%S')"
 SERVER="while true; do printf 'HTTP/1.1 200 OK\r\nContent-Length: 13\r\n\r\n${EXPECT_BODY}' | nc -l -p 80; done"
 OUT="$("${BIN}" run -d -p "${HOST_PORT}:80" --engine vz --rootfs alpine -- sh -c "${SERVER}" 2>&1)" \
     || log_fail "run -d failed: ${OUT}"
-RUN_ID="$(echo "${OUT}" | grep -oE 'id=[0-9-]+' | cut -d= -f2)"
+# `run -d` prints the bare run id (Docker parity since 1a41299); older builds
+# printed `id=<id>`. Accept both.
+RUN_ID="$(echo "${OUT}" | grep -oE '[0-9]{10,}-[0-9]+' | tail -1)"
 [ -n "${RUN_ID}" ] || log_fail "no run id printed (got: ${OUT})"
 log_pass
-log_info "run id = ${RUN_ID}"
+log_info "run id = ${RUN_ID} (host NAT ${NAT_WARM} at launch; load $(sysctl -n vm.loadavg))"
 
 # ── Step 7: HTTP round-trip through the guest (poll: boot + DHCP + listen) ─────
 log_step "Step 7: HTTP round-trip via 127.0.0.1:${HOST_PORT}"
@@ -125,9 +148,21 @@ for _ in $(seq 1 60); do
     if [ -n "${R}" ]; then GOT="${R}"; break; fi
     sleep 0.5
 done
-[ "${GOT}" = "${EXPECT_BODY}" ] || log_fail "expected '${EXPECT_BODY}', got '${GOT}' (status: $(cat "${LIGHTR_HOME:-${HOME}/.lightr}/run/${RUN_ID}/status" 2>/dev/null))"
+if [ "${GOT}" != "${EXPECT_BODY}" ]; then
+    # Attribute a no-IP failure: did the host NAT come up while the guest's
+    # kernel `ip=dhcp` was still retrying? The VM asks NetworkSharing for NAT;
+    # the guest can lease only after vmenet attaches and bridge100 has
+    # 192.168.64.1. Guest virtio-net "TX timeout" lines before that are the
+    # symptom, not the cause.
+    echo
+    log_info "host NAT timeline since ${RUN_START} (empty = NAT never came up):"
+    /usr/bin/log show --start "${RUN_START}" --style compact 2>/dev/null \
+        | grep -E "Successfully spawned (VirtualMachine|InternetSharing)|name=com.apple.NetworkSharing$|interface attach: vmenet|added addr=192.168.64.1" \
+        | cut -c1-220 || true
+    log_fail "expected '${EXPECT_BODY}', got '${GOT}' (status: $(cat "${LIGHTR_DIR}/run/${RUN_ID}/status" 2>/dev/null))"
+fi
 log_pass
-log_info "guest IP = $(cat "${LIGHTR_HOME:-${HOME}/.lightr}/run/${RUN_ID}/rootfs/.lightr-ip" 2>/dev/null)"
+log_info "guest IP = $(cat "${LIGHTR_DIR}/run/${RUN_ID}/rootfs/.lightr-ip" 2>/dev/null)"
 
 # ── Step 8: stop tears it down (port closed) ──────────────────────────────────
 log_step "Step 8: stop ⇒ clean exit + port closed"
@@ -139,7 +174,7 @@ log_step "Step 8: stop ⇒ clean exit + port closed"
 sleep 1
 AFTER="$(curl -s --max-time 3 "http://127.0.0.1:${HOST_PORT}/" 2>/dev/null || true)"
 [ -z "${AFTER}" ] || log_fail "port still reachable after stop (got '${AFTER}')"
-STATUS="$(cat "${LIGHTR_HOME:-${HOME}/.lightr}/run/${RUN_ID}/status" 2>/dev/null || true)"
+STATUS="$(cat "${LIGHTR_DIR}/run/${RUN_ID}/status" 2>/dev/null || true)"
 echo "${STATUS}" | grep -q "exited" || log_fail "status not 'exited' after stop (got '${STATUS}')"
 log_pass
 
