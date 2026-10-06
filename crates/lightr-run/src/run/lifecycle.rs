@@ -149,6 +149,9 @@ pub fn respawn_run(home: &Path, id: &str) -> Result<()> {
     // The spec must be readable for the supervisor to act on it — fail closed
     // here with a clear error rather than spawning a supervisor that will die.
     read_spec_on_disk(&dir)?;
+    // Refuse before touching the run's status: a supervisor that cannot bind
+    // `ctl.sock` (path past the AF_UNIX limit) could not be stopped or observed.
+    super::ctl::ensure_ctl_sock_fits(&dir)?;
 
     // Clear any stale terminal status so a watcher (`wait_run`) does not read the
     // PREVIOUS run's exit code before the re-launched supervisor overwrites it.

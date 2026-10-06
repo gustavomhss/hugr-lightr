@@ -4,8 +4,6 @@
 use lightr_core::{LightrError, Result};
 use lightr_store::Store;
 
-#[cfg(unix)]
-use super::ctl::ctl_sock_path;
 use super::types::SpecOnDisk;
 
 /// Supervise a `vz` container run: boot a Linux microVM in THIS process and
@@ -13,6 +11,8 @@ use super::types::SpecOnDisk;
 /// guest's DHCP IP. This is the `-p`-for-a-Linux-image case.
 ///
 /// Lifecycle:
+/// 0. Bind `ctl.sock` before anything else, so a run that `stop`/`ps` cannot
+///    reach never boots (the bind failure is recorded in the run dir).
 /// 1. Hydrate the rootfs ref CoW into `<run_dir>/rootfs` (lives for the VM, gc'd
 ///    with the run dir).
 /// 2. Boot the VM on a worker thread — `engine.run(net=true)` blocks until the VM
@@ -20,7 +20,8 @@ use super::types::SpecOnDisk;
 ///    guest publish its IP to `IP_FILE`.
 /// 3. Read the guest IP from `IP_FILE` (or bail if the VM exits first).
 /// 4. Write pid (our own) + status, start a forwarder per published port.
-/// 5. Serve `ctl.sock` (status/signal) + poll the VM. `signal` writes the guest
+/// 5. Serve `ctl.sock` (status/signal) + poll the VM. A stop sent during boot
+///    waits in the listen backlog and is served here. `signal` writes the guest
 ///    `EXIT_FILE` with the `128+sig` code; the shim polls it and force-stops the
 ///    VM (no new shim code), the worker returns, and we exit cleanly.
 ///
@@ -34,7 +35,6 @@ pub(super) fn supervise_vz(dir: &std::path::Path, spec: &SpecOnDisk, store: &Sto
     use std::io::{BufRead, BufReader, Write};
     use std::net::Ipv4Addr;
     use std::os::unix::io::{AsRawFd, OwnedFd};
-    use std::os::unix::net::UnixListener;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Mutex};
@@ -56,6 +56,10 @@ pub(super) fn supervise_vz(dir: &std::path::Path, spec: &SpecOnDisk, store: &Sto
         .clone()
         .ok_or_else(|| LightrError::InvalidRef("vz supervise: missing rootfs_ref".to_string()))?;
     let cwd = PathBuf::from(&spec.cwd);
+
+    // 0. The control plane first: nothing is hydrated, attached or booted when
+    //    it cannot bind. The guard removes `ctl.sock` on every later return.
+    let ctl = super::ctl::bind_ctl_listener(dir)?;
 
     // 1. Hydrate the rootfs ref into <run_dir>/rootfs (persists for the VM's life;
     //    cleaned with the run dir, unlike the memo path's throwaway temp dir).
@@ -253,6 +257,7 @@ pub(super) fn supervise_vz(dir: &std::path::Path, spec: &SpecOnDisk, store: &Sto
         }
         let _ = std::fs::write(&exit_file, "143");
         let code = *vm_code.lock().expect("vm_code mutex");
+        drop(ctl);
         let _ = std::fs::write(dir.join("status"), format!("exited {code}"));
         detach();
         return Ok(code);
@@ -296,15 +301,11 @@ pub(super) fn supervise_vz(dir: &std::path::Path, spec: &SpecOnDisk, store: &Sto
     // 6. ctl.sock loop: serve status/signal + poll the VM (mirrors the unix native
     //    loop). `signal` writes EXIT_FILE (force-stop); the shim stops the VM, the
     //    worker returns, vm_done flips, and we break with the real exit code.
-    let sock_path = ctl_sock_path(dir);
-    let listener = UnixListener::bind(&sock_path).map_err(LightrError::Io)?;
-    listener.set_nonblocking(true).map_err(LightrError::Io)?;
-
     let exit_code = loop {
         if vm_done.load(Ordering::SeqCst) {
             break *vm_code.lock().expect("vm_code mutex");
         }
-        match listener.accept() {
+        match ctl.listener.accept() {
             Ok((stream, _)) => {
                 stream.set_read_timeout(Some(Duration::from_secs(1))).ok();
                 stream.set_write_timeout(Some(Duration::from_secs(1))).ok();
@@ -342,8 +343,9 @@ pub(super) fn supervise_vz(dir: &std::path::Path, spec: &SpecOnDisk, store: &Sto
         std::thread::sleep(Duration::from_millis(100));
     };
 
+    // FIX-#76 teardown order: remove the socket, THEN write the terminal status.
+    drop(ctl);
     std::fs::write(dir.join("status"), format!("exited {exit_code}")).map_err(LightrError::Io)?;
-    let _ = std::fs::remove_file(&sock_path);
     drop(forwarders); // close listeners + per-connection threads
     detach();
     Ok(exit_code)

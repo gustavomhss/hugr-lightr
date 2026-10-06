@@ -1,5 +1,5 @@
 //! Unit tests for the run-instance lifecycle primitives. Parallel-safe: every
-//! test injects its OWN private tempdir as `home` (atomic counter + nanos unique)
+//! test injects its OWN private tempdir as `home` (pid + atomic counter unique)
 //! and never mutates process-global state — matching CI's multi-threaded
 //! `cargo test --workspace`.
 
@@ -8,7 +8,9 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 /// A private tempdir used as the lifecycle `home` root, removed on drop. The
-/// atomic counter + nanos guarantee a unique dir even under concurrent tests.
+/// pid + atomic counter guarantee a unique dir even under concurrent tests. The
+/// name stays short: `respawn_run` refuses a home whose `run/<id>/ctl.sock`
+/// exceeds the AF_UNIX path limit (103 bytes on macOS).
 struct TmpHome {
     dir: PathBuf,
 }
@@ -17,11 +19,7 @@ impl TmpHome {
     fn new(tag: &str) -> Self {
         static CTR: AtomicU64 = AtomicU64::new(0);
         let n = CTR.fetch_add(1, Ordering::Relaxed);
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0);
-        let dir = std::env::temp_dir().join(format!("lightr-life-{tag}-{nanos}-{n}"));
+        let dir = std::env::temp_dir().join(format!("{tag}-{}-{n}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         TmpHome { dir }
     }
