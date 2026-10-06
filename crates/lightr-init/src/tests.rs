@@ -11,6 +11,9 @@ fn sample_spec() -> InitSpec {
         ],
         net: false,
         suspend_gate: false,
+        user: None,
+        volumes: Vec::new(),
+        shm_size: None,
     }
 }
 
@@ -42,8 +45,13 @@ fn initspec_from_json_without_net_defaults_to_false() {
 
 // ── FakeOps / VecSink seams ────────────────────────────────────────────
 
-/// A captured `spawn_wait` call: (command, cwd, env).
-type SpawnCall = (Vec<String>, String, Vec<(String, String)>);
+/// A captured `spawn_wait` call: (command, cwd, env, user).
+type SpawnCall = (
+    Vec<String>,
+    String,
+    Vec<(String, String)>,
+    Option<GuestUser>,
+);
 
 fn sample_gate() -> SuspendGate {
     SuspendGate {
@@ -63,7 +71,9 @@ struct FakeOps {
     released: bool,
     /// The `pid_proof` gate `spawn_wait` was asked to prove (`None` = no proof).
     pid_proof: Option<Option<SuspendGate>>,
-    fail_at: Option<&'static str>, // "mount" | "read" | "enter"
+    fail_at: Option<&'static str>, // "mount" | "read" | "enter" | "setup"
+    /// The spec `setup_guest` was handed (proves it sees user/volumes/shm).
+    setup_spec: Option<InitSpec>,
 }
 
 impl FakeOps {
@@ -77,6 +87,7 @@ impl FakeOps {
             released: false,
             pid_proof: None,
             fail_at: None,
+            setup_spec: None,
         }
     }
 
@@ -90,6 +101,7 @@ impl FakeOps {
             released: false,
             pid_proof: None,
             fail_at: None,
+            setup_spec: None,
         }
     }
 
@@ -103,6 +115,7 @@ impl FakeOps {
             released: false,
             pid_proof: None,
             fail_at: Some(step),
+            setup_spec: None,
         }
     }
 
@@ -132,16 +145,22 @@ impl GuestOps for FakeOps {
         self.maybe_fail("enter")
     }
 
+    fn setup_guest(&mut self, spec: &InitSpec) -> io::Result<()> {
+        self.setup_spec = Some(spec.clone());
+        self.maybe_fail("setup")
+    }
+
     fn spawn_wait(
         &mut self,
         cmd: &[String],
         cwd: &str,
         env: &[(String, String)],
+        user: Option<&GuestUser>,
         pid_proof: Option<&SuspendGate>,
     ) -> io::Result<i32> {
         self.steps.push("spawn");
         self.pid_proof = Some(pid_proof.cloned());
-        self.spawned = Some((cmd.to_vec(), cwd.to_string(), env.to_vec()));
+        self.spawned = Some((cmd.to_vec(), cwd.to_string(), env.to_vec(), user.cloned()));
         match &self.spawn_result {
             Ok(code) => Ok(*code),
             Err(e) => Err(io::Error::from(e.kind())),
@@ -183,14 +202,15 @@ fn run_init_runs_lifecycle_in_order_and_reports_exact_code() {
 
     let rc = run_init(&mut ops, &mut sink).expect("ok");
 
-    // (a) lifecycle order: mount → read → enter → spawn.
+    // (a) lifecycle order: mount → read → enter → setup → spawn.
     assert_eq!(
         ops.steps,
-        vec!["mount", "read", "enter", "spawn"],
+        vec!["mount", "read", "enter", "setup", "spawn"],
         "fixed lifecycle order"
     );
     // (b) spawns with the spec's cmd / cwd / env.
-    let (cmd, cwd, env) = ops.spawned.expect("command was spawned");
+    let (cmd, cwd, env, user) = ops.spawned.expect("command was spawned");
+    assert_eq!(user, None, "no user in the spec => root");
     assert_eq!(cmd, sample_spec().command);
     assert_eq!(cwd, sample_spec().cwd);
     assert_eq!(env, sample_spec().env);
@@ -218,10 +238,10 @@ fn run_init_publishes_ip_when_net_enabled() {
 
     run_init(&mut ops, &mut sink).expect("ok");
 
-    // publish_ip runs AFTER enter and BEFORE spawn (a server may block).
+    // publish_ip runs AFTER enter + setup and BEFORE spawn (a server may block).
     assert_eq!(
         ops.steps,
-        vec!["mount", "read", "enter", "publish_ip", "spawn"],
+        vec!["mount", "read", "enter", "setup", "publish_ip", "spawn"],
         "publish_ip is between enter and spawn"
     );
     assert!(ops.published, "the guest IP was published");
@@ -235,7 +255,7 @@ fn suspend_gate_releases_before_workload_spawn() {
     run_init(&mut ops, &mut sink).expect("gated init succeeds");
     assert_eq!(
         ops.steps,
-        vec!["mount", "read", "enter", "release", "spawn"]
+        vec!["mount", "read", "enter", "setup", "release", "spawn"]
     );
     assert!(ops.released, "gate release must precede workload spawn");
 }
@@ -265,7 +285,7 @@ fn run_init_reports_127_on_spawn_failure() {
 
     assert_eq!(rc, SPAWN_FAILED_CODE, "command-not-found => 127");
     assert_eq!(sink.reports, vec![SPAWN_FAILED_CODE], "127 is reported");
-    assert_eq!(ops.steps, vec!["mount", "read", "enter", "spawn"]);
+    assert_eq!(ops.steps, vec!["mount", "read", "enter", "setup", "spawn"]);
 }
 
 // ── mount / read / enter failure ⇒ Err, NOTHING reported ───────────────
@@ -351,4 +371,198 @@ fn guest_spawn_wait_never_reads_the_gate_file() {
     let body = &bin[start..end];
     assert!(body.contains("if let Some(gate) = pid_proof"));
     assert!(!body.contains("SUSPEND_GATE_FILE"));
+}
+
+// ── ADR-0024 D4: guest setup, user, spawn-failure codes ────────────────
+
+#[test]
+fn setup_failure_fails_the_boot_closed() {
+    let mut ops = FakeOps::failing_at("setup");
+    let mut sink = VecSink::default();
+    let err = run_init(&mut ops, &mut sink).expect_err("setup failure propagates");
+    assert_eq!(err.kind(), io::ErrorKind::PermissionDenied);
+    assert!(sink.reports.is_empty(), "no exit code after a failed setup");
+    assert_eq!(ops.steps, vec!["mount", "read", "enter", "setup"]);
+    assert!(ops.spawned.is_none(), "the workload never starts");
+}
+
+#[test]
+fn setup_sees_the_spec_and_spawn_gets_the_user() {
+    let user = GuestUser {
+        uid: 1000,
+        gid: 1000,
+        groups: vec![1000, 27],
+    };
+    let mut ops = FakeOps::spawning(0);
+    ops.spec.user = Some(user.clone());
+    ops.spec.shm_size = Some(1 << 20);
+    let mut sink = VecSink::default();
+    run_init(&mut ops, &mut sink).expect("ok");
+    assert_eq!(ops.setup_spec.as_ref().unwrap().shm_size, Some(1 << 20));
+    assert_eq!(ops.spawned.unwrap().3, Some(user));
+}
+
+#[test]
+fn spawn_failures_map_to_127_only_when_the_command_is_missing() {
+    for (kind, code) in [
+        (io::ErrorKind::NotFound, SPAWN_FAILED_CODE),
+        (io::ErrorKind::PermissionDenied, SPAWN_DENIED_CODE),
+        (io::ErrorKind::NotADirectory, SPAWN_DENIED_CODE),
+    ] {
+        let mut ops = FakeOps::spawning(0);
+        ops.spawn_result = Err(io::Error::from(kind));
+        let mut sink = VecSink::default();
+        assert_eq!(run_init(&mut ops, &mut sink).unwrap(), code, "{kind:?}");
+        assert_eq!(sink.reports, vec![code]);
+    }
+}
+
+#[test]
+fn abi1_json_parses_and_abi1_shaped_specs_serialize_unchanged() {
+    let legacy = br#"{"command":["true"],"cwd":"/","env":[],"net":false,"suspend_gate":false}"#;
+    let spec = InitSpec::from_json(legacy).expect("legacy json parses");
+    assert_eq!(
+        (spec.user.clone(), spec.volumes.len(), spec.shm_size),
+        (None, 0, None)
+    );
+    assert_eq!(spec.to_json(), legacy.to_vec(), "no new keys when unused");
+}
+
+#[test]
+fn abi2_fields_roundtrip() {
+    let mut spec = sample_spec();
+    spec.user = Some(GuestUser {
+        uid: 1,
+        gid: 2,
+        groups: vec![2, 3],
+    });
+    spec.volumes = vec![GuestVolume {
+        tag: "vol0".to_string(),
+        target: "/data".to_string(),
+        readonly: true,
+    }];
+    spec.shm_size = Some(4096);
+    assert_eq!(InitSpec::from_json(&spec.to_json()).unwrap(), spec);
+}
+
+// ── the setup plan (data; bin/init.rs executes it) ─────────────────────
+
+fn mounts(plan: &[SetupStep]) -> Vec<&GuestMount> {
+    plan.iter()
+        .filter_map(|s| match s {
+            SetupStep::Mount(m) => Some(m),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn setup_plan_mounts_the_d4_table_in_order() {
+    let plan = guest_setup_plan(None, &[]);
+    let m = mounts(&plan);
+    let shape: Vec<(&str, &str)> = m
+        .iter()
+        .map(|m| (m.fstype.as_str(), m.target.as_str()))
+        .collect();
+    assert_eq!(
+        shape,
+        vec![
+            ("proc", "/proc"),
+            ("sysfs", "/sys"),
+            ("devtmpfs", "/dev"),
+            ("devpts", "/dev/pts"),
+            ("tmpfs", "/dev/shm"),
+            ("tmpfs", "/tmp"),
+        ]
+    );
+    let hardened = MountFlags {
+        rdonly: false,
+        nosuid: true,
+        nodev: true,
+        noexec: true,
+    };
+    assert_eq!(m[0].flags, hardened, "proc nosuid,nodev,noexec");
+    assert_eq!(
+        m[1].flags,
+        MountFlags {
+            rdonly: true,
+            ..hardened
+        },
+        "sysfs read-only"
+    );
+    assert_eq!(m[3].data, "newinstance,ptmxmode=0666,mode=0620,gid=5");
+    assert_eq!(m[4].data, format!("mode=1777,size={DEFAULT_SHM_BYTES}"));
+    assert_eq!(m[5].data, "mode=1777");
+    assert!(plan.contains(&SetupStep::Symlink {
+        target: "pts/ptmx".to_string(),
+        link: "/dev/ptmx".to_string(),
+    }));
+    assert!(plan.contains(&SetupStep::LoopbackUp));
+}
+
+#[test]
+fn setup_plan_sizes_shm_from_the_run() {
+    let plan = guest_setup_plan(Some(128 * 1024 * 1024), &[]);
+    assert_eq!(mounts(&plan)[4].data, "mode=1777,size=134217728");
+}
+
+#[test]
+fn setup_plan_mounts_volumes_last_with_their_mode() {
+    let vols = [
+        GuestVolume {
+            tag: "vol0".to_string(),
+            target: "/data".to_string(),
+            readonly: true,
+        },
+        GuestVolume {
+            tag: "vol1".to_string(),
+            target: "/tmp".to_string(),
+            readonly: false,
+        },
+    ];
+    let plan = guest_setup_plan(None, &vols);
+    let last: Vec<_> = plan[plan.len() - 2..].to_vec();
+    let SetupStep::Mount(ro) = &last[0] else {
+        panic!("volume is a mount")
+    };
+    assert_eq!(
+        (ro.source.as_str(), ro.target.as_str(), ro.fstype.as_str()),
+        ("vol0", "/data", "virtiofs")
+    );
+    assert!(ro.flags.rdonly, ":ro is a read-only mount");
+    let SetupStep::Mount(rw) = &last[1] else {
+        panic!("volume is a mount")
+    };
+    assert!(!rw.flags.rdonly);
+    let tmp = plan
+        .iter()
+        .position(|s| matches!(s, SetupStep::Mount(m) if m.target == "/tmp" && m.fstype == "tmpfs"))
+        .unwrap();
+    assert!(tmp < plan.len() - 2, "a volume may cover the /tmp tmpfs");
+}
+
+/// The Linux executor must run every plan step and stop at the first failure;
+/// it must also reap orphans (waitpid(-1)) and drop privileges in order.
+#[test]
+fn guest_executor_follows_the_plan_and_drops_privileges_in_order() {
+    let bin = include_str!("bin/init.rs");
+    let setup = &bin[bin.find("fn setup_guest(").unwrap()..];
+    assert!(setup.contains("guest_setup_plan(spec.shm_size, &spec.volumes)"));
+    assert!(setup.contains("describe_step(&step)"));
+    let spawn = &bin[bin.find("fn spawn_wait(").unwrap()..bin.find("fn publish_ip(").unwrap()];
+    let groups = spawn.find("libc::setgroups").unwrap();
+    let gid = spawn.find("libc::setgid").unwrap();
+    let uid = spawn.find("libc::setuid").unwrap();
+    assert!(groups < gid && gid < uid, "setgroups → setgid → setuid");
+    assert!(
+        spawn.contains("reap_until(child.id()"),
+        "no plain child.wait()"
+    );
+    assert!(!spawn.contains("child.wait()"));
+    let sys = include_str!("bin/init_sys/mod.rs");
+    let reap = &sys[sys.find("fn reap_until(").unwrap()..];
+    assert!(
+        reap.contains("libc::waitpid(-1"),
+        "PID 1 reaps every orphan"
+    );
 }

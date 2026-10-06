@@ -20,6 +20,23 @@
 
 use serde::{Deserialize, Serialize};
 
+mod setup;
+pub use setup::{
+    describe_step, guest_setup_plan, GuestMount, GuestUser, GuestVolume, MountFlags, SetupStep,
+    DEFAULT_SHM_BYTES,
+};
+
+/// Version of the [`InitSpec`] contract this init implements, recorded as
+/// `init_abi` in a pack's `pack.json`. `InitSpec` has no
+/// `deny_unknown_fields`, so an older init would IGNORE a newer field (run as
+/// root instead of `user`, skip `volumes`). The host therefore refuses a spec
+/// that needs more than the installed pack's ABI (ADR-0024 D4).
+///
+/// - 1: `command`, `cwd`, `env`, `net`, `suspend_gate` (packs without the field).
+/// - 2: `user`, `volumes`, `shm_size`, and the D4 guest setup (proc, sys, dev,
+///   devpts, shm, tmp, `lo`) plus the orphan reaper.
+pub const INIT_ABI: u32 = 2;
+
 /// virtiofs tag for the rootfs share (matches the Swift shim's `rootfs` tag).
 pub const ROOTFS_TAG: &str = "rootfs";
 /// Mount target for the rootfs virtiofs share (before chroot).
@@ -72,6 +89,11 @@ pub const SUSPEND_RELEASE_FILE: &str = "/.lightr-suspend-release";
 /// and successful child spawn; host must reject missing or malformed proof.
 pub const WORKLOAD_PID_FILE: &str = "/.lightr-workload-pid";
 
+/// Init failure file: when the guest setup fails after `chroot`, PID 1 writes
+/// the failing step here (on the rootfs share) and writes NO [`EXIT_FILE`], so
+/// the host reports 255 and can name the cause.
+pub const INIT_ERROR_FILE: &str = "/.lightr-init-error";
+
 /// The PATH injected into the guest command's environment. SINGLE SOURCE OF
 /// TRUTH: the vz engine puts this in the command's env (InitSpec), and the
 /// vz-memo key (lightr-cli handler) hashes the SAME value — if these drifted, a
@@ -83,6 +105,11 @@ pub const GUEST_PATH: &str = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:
 /// the shell "command not found" convention so the host sees a real, non-zero
 /// outcome rather than a fabricated success.
 pub const SPAWN_FAILED_CODE: i32 = 127;
+
+/// Exit code reported when the command exists but cannot be started: a
+/// missing working directory, a refused `setuid`/`setgid`, or EACCES. Matches
+/// the shell "cannot execute" convention.
+pub const SPAWN_DENIED_CODE: i32 = 126;
 
 /// What PID1 must do, as data — written by the host to [`CMD_FILE`] on the
 /// rootfs share, read back by the guest.
@@ -101,6 +128,15 @@ pub struct InitSpec {
     /// release before it spawns the workload.
     #[serde(default)]
     pub suspend_gate: bool,
+    /// ABI 2: run the workload as this identity. `None` = root.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user: Option<GuestUser>,
+    /// ABI 2: host directories to mount (virtiofs tags from the shim).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub volumes: Vec<GuestVolume>,
+    /// ABI 2: `/dev/shm` size in bytes. `None` = [`DEFAULT_SHM_BYTES`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shm_size: Option<u64>,
 }
 
 /// Persisted authority for one snapshot gate. Host creates this before boot;
@@ -157,7 +193,13 @@ pub trait GuestOps {
     /// Enter the rootfs (chroot [`ROOTFS_DEST`] + chdir `/`) so the command
     /// resolves inside the guest rootfs, not the initrd.
     fn enter_rootfs(&mut self) -> std::io::Result<()>;
-    /// Spawn the command, wait, return its exit code (128+signal on signal).
+    /// Perform the ADR-0024 D4 guest setup ([`guest_setup_plan`]) inside the
+    /// rootfs. Any failed step is an `Err` naming the step: the boot fails
+    /// closed, nothing is spawned or reported.
+    fn setup_guest(&mut self, spec: &InitSpec) -> std::io::Result<()>;
+    /// Spawn the command as `user` (root when `None`), wait while reaping
+    /// orphans, return its exit code (128+signal on signal). A spawn failure
+    /// is an `Err`: `NotFound` maps to 127, anything else to 126.
     /// `pid_proof` is the released snapshot gate, present only for a
     /// `suspend_gate` run: then, after spawn and before waiting, the workload PID
     /// proof goes to [`WORKLOAD_PID_FILE`]. An ordinary run has no gate file, so
@@ -167,6 +209,7 @@ pub trait GuestOps {
         cmd: &[String],
         cwd: &str,
         env: &[(String, String)],
+        user: Option<&GuestUser>,
         pid_proof: Option<&SuspendGate>,
     ) -> std::io::Result<i32>;
     /// Publish the guest's primary non-loopback IPv4 to [`IP_FILE`] (container
@@ -181,14 +224,15 @@ pub trait GuestOps {
 }
 
 /// The init lifecycle: mount rootfs → read the command → enter the rootfs →
-/// spawn → report the exit code. Fixed order.
+/// guest setup → spawn → report the exit code. Fixed order.
 ///
 /// Honesty invariant (the whole point of this WP): `sink.report()` is called
 /// with the ACTUAL exit code — never a hardcoded success.
 /// - A mount or spec-read failure propagates as `Err` and reports NOTHING (no
 ///   fake code — the host then maps the missing exit file to a real non-zero).
-/// - A spawn failure (e.g. ENOENT) is a real outcome: report
-///   [`SPAWN_FAILED_CODE`] (127) and return it.
+/// - A guest setup failure (ADR-0024 D4) also propagates and reports nothing.
+/// - A spawn failure is a real outcome: report [`SPAWN_FAILED_CODE`] (127)
+///   for a missing command, [`SPAWN_DENIED_CODE`] (126) otherwise.
 pub fn run_init<M: GuestOps>(ops: &mut M, sink: &mut dyn ExitSink) -> std::io::Result<i32> {
     // 1. Mount the rootfs share. A mount failure is unrecoverable → propagate,
     //    report NOTHING.
@@ -200,6 +244,11 @@ pub fn run_init<M: GuestOps>(ops: &mut M, sink: &mut dyn ExitSink) -> std::io::R
 
     // 3. Enter the rootfs so the command resolves there (not the initrd).
     ops.enter_rootfs()?;
+
+    // 3a. Container-like guest (ADR-0024 D4): proc/sys/dev/devpts/shm/tmp, the
+    //     /dev links, lo, then volumes. A failed step propagates: no spawn, no
+    //     report, so the host maps the missing EXIT_FILE to 255.
+    ops.setup_guest(&spec)?;
 
     // 3b. Container networking: publish the guest IP BEFORE spawn (a published
     //     server blocks forever, so this must precede the spawn). Gated on net.
@@ -215,13 +264,21 @@ pub fn run_init<M: GuestOps>(ops: &mut M, sink: &mut dyn ExitSink) -> std::io::R
         None
     };
 
-    // 4. Spawn and capture the REAL exit code. A spawn failure (command not
-    //    found) is still a real outcome → 127, not an Err. Only a gated run
-    //    writes the workload PID proof (ADR-0024 D6: reading the gate file on
-    //    every run made each ordinary run report 127).
-    let code = match ops.spawn_wait(&spec.command, &spec.cwd, &spec.env, gate.as_ref()) {
+    // 4. Spawn and capture the REAL exit code. A spawn failure is still a real
+    //    outcome, not an Err: 127 when the command is missing, 126 when it
+    //    cannot start (workdir, setuid, EACCES). Only a gated run writes the
+    //    workload PID proof (ADR-0024 D6: reading the gate file on every run
+    //    made each ordinary run report 127).
+    let code = match ops.spawn_wait(
+        &spec.command,
+        &spec.cwd,
+        &spec.env,
+        spec.user.as_ref(),
+        gate.as_ref(),
+    ) {
         Ok(code) => code,
-        Err(_) => SPAWN_FAILED_CODE,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => SPAWN_FAILED_CODE,
+        Err(_) => SPAWN_DENIED_CODE,
     };
 
     // 5. Report the actual code, then return it. This is the line that kills the

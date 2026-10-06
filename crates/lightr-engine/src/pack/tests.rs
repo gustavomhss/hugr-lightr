@@ -135,6 +135,47 @@ fn assemble_pack_lays_out_kernel_and_valid_initrd() {
     assert_eq!(manifest.arch, "aarch64");
     assert_eq!(manifest.kernel_version.as_deref(), Some("6.12.0"));
     assert_eq!(manifest.init_sha256, sha256_hex(init_bytes));
+    assert_eq!(
+        manifest.init_abi,
+        Some(lightr_init::INIT_ABI),
+        "ADR-0024 init_abi"
+    );
+}
+
+// ── ADR-0024 D4: init_abi version skew fails closed ─────────────────────
+
+#[test]
+fn installed_init_abi_reads_the_manifest_and_defaults_old_packs_to_1() {
+    let (_tmp, out) = assemble_good_pack();
+    assert_eq!(installed_init_abi(&out).unwrap(), lightr_init::INIT_ABI);
+    std::fs::write(
+        out.join("pack.json"),
+        br#"{"arch":"x86_64","init_sha256":"00"}"#,
+    )
+    .unwrap();
+    assert_eq!(installed_init_abi(&out).unwrap(), 1, "field absent ⇒ 1");
+    std::fs::remove_file(out.join("pack.json")).unwrap();
+    assert_eq!(installed_init_abi(&out).unwrap(), 1, "manifest absent ⇒ 1");
+    std::fs::write(out.join("pack.json"), b"{nope").unwrap();
+    assert!(
+        installed_init_abi(&out).is_err(),
+        "malformed is not a guess"
+    );
+}
+
+#[test]
+fn require_init_abi_refuses_an_old_pack_with_the_reinstall_error() {
+    let (_tmp, out) = assemble_good_pack();
+    assert!(require_init_abi(&out, lightr_init::INIT_ABI).is_ok());
+    assert!(require_init_abi(&out, 1).is_ok());
+    std::fs::write(
+        out.join("pack.json"),
+        br#"{"arch":"x86_64","init_sha256":"00"}"#,
+    )
+    .unwrap();
+    assert!(require_init_abi(&out, 1).is_ok(), "ABI-1 specs still run");
+    let err = require_init_abi(&out, 2).unwrap_err().to_string();
+    assert!(err.contains("linux pack too old, reinstall"), "{err}");
 }
 
 #[test]
