@@ -62,7 +62,7 @@ pub use run::lifecycle::{
 pub use run::memo::{predict, run_memoized, run_memoized_with};
 
 // vzmemo
-pub use run::vzmemo::{run_vz_memoized, vz_memo_key};
+pub use run::vzmemo::{run_vz_memoized, run_vz_memoized_with, vz_memo_key};
 
 // deepmemo
 pub use run::deepmemo::{deep_memo_available, run_memoized_deep};

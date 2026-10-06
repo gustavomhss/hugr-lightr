@@ -50,6 +50,49 @@ pub(crate) enum MountOnDisk2 {
     },
 }
 
+impl MountOnDisk2 {
+    /// spec.json mount → the engine's mount, for the vz supervisor. Only
+    /// `HostBind` reaches a vz run (the CLI refuses the rest); any other kind is
+    /// carried as-is so the engine's `build_init_spec` refuses it before boot
+    /// instead of dropping it (ADR-0024 D4).
+    #[cfg(unix)]
+    pub(crate) fn to_engine_mount(&self) -> lightr_engine::ResolvedMount {
+        use lightr_engine::{MountKind, ResolvedMount};
+        let (kind, source, target, readonly) = match self {
+            Self::HostBind {
+                source,
+                target,
+                readonly,
+            } => (MountKind::HostBind, Some(source.clone()), target, *readonly),
+            Self::NamedVolume {
+                source,
+                target,
+                readonly,
+            } => (
+                MountKind::NamedVolume,
+                Some(source.clone()),
+                target,
+                *readonly,
+            ),
+            Self::CasRef {
+                ref_name,
+                target,
+                readonly,
+            } => (MountKind::CasRef, Some(ref_name.clone()), target, *readonly),
+            Self::AnonVolume { target, readonly } => {
+                (MountKind::AnonVolume, None, target, *readonly)
+            }
+            Self::Tmpfs { target, .. } => (MountKind::Tmpfs, None, target, false),
+        };
+        ResolvedMount {
+            kind,
+            source,
+            target: target.clone(),
+            readonly,
+        }
+    }
+}
+
 // R-SPECDISK (parity-contract.md §0): proto-tagged published-port shape. The
 // legacy `ports: Vec<(u16,u16)>` stays for read back-compat (TCP-only); `ports2`
 // carries the protocol so UDP can land without a second format bump. Behaviour

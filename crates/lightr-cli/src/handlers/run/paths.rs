@@ -12,7 +12,7 @@ use lightr_store::Store;
 
 use crate::exit::die_lightr;
 
-const IMAGE_CONFIG_FILE: &str = ".lightr-image.json";
+pub(super) const IMAGE_CONFIG_FILE: &str = ".lightr-image.json";
 
 // The vz-memo path helper lives in `paths_vz.rs`, pulled in as a child module
 // via `#[path]` to keep this file under the 400-line godfile cap, and re-exported
@@ -328,7 +328,7 @@ fn load_image_config(
     }
 }
 
-fn image_config_from_oci(bytes: &[u8]) -> Result<lightr_build::ImageConfig> {
+pub(super) fn image_config_from_oci(bytes: &[u8]) -> Result<lightr_build::ImageConfig> {
     let oci: OciImageConfig = serde_json::from_slice(bytes)
         .map_err(|e| LightrError::InvalidManifest(format!("OCI image config parse: {e}")))?;
     let env = oci

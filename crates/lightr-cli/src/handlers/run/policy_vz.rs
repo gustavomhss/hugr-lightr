@@ -1,24 +1,22 @@
-//! ADR-0024 stage 2: refuse the `lightr run` flags the `vz` engine does not apply.
+//! ADR-0024: refuse the `lightr run` flags the `vz` engine does not apply.
 //!
-//! Both vz paths hand the engine an empty env/user/mounts/workdir (detached
-//! supervisor `lightr-run/src/run/svz.rs`, foreground memo path `paths_vz.rs`),
-//! and `VzEngine::run` writes a guest env of `PATH` only, cwd `/`, and ignores the
-//! hostname/DNS/hosts fields. Until the guest init applies them (ADR-0024 stages
-//! 3-4), each such flag is an honest exit 2 before provisioning, never a silent
-//! drop (CLAUDE.md principle 7).
+//! Since D4 both vz paths (detached supervisor `lightr-run/src/run/svz.rs`,
+//! foreground memo path `paths_vz.rs`) hand the engine the resolved env, user,
+//! workdir, `-v` host directories and `--shm-size`, and the guest init applies
+//! them (`lightr_engine::engine::vzguest`). Still dropped, so still an honest
+//! exit 2 before provisioning (CLAUDE.md principle 7): `--env KEY` (host-env
+//! memo keys; the guest does not inherit the host env), named volumes,
+//! `--mount` CAS refs, `--hostname`, `--dns`, `--add-host`.
 
 use lightr_engine::EngineKind;
 
 use super::runflags::RunFlags;
 use super::RcConfig;
 
-/// The raw `lightr run` inputs that the vz engine drops today.
+/// The raw `lightr run` inputs the vz policy judges. `-e`, `--env-file`, `-u`
+/// and `-w` are applied (D4), so they are no longer inputs here.
 pub(super) struct VzFlagInputs<'a> {
-    pub env_set: &'a [String],
-    pub env_file: Option<&'a str>,
     pub env_keys: &'a [String],
-    pub user: Option<&'a str>,
-    pub workdir: Option<&'a str>,
     pub mounts_raw: &'a [String],
     pub runflags: &'a RunFlags,
     pub rc: &'a RcConfig,
@@ -40,16 +38,12 @@ fn vz_unapplied_flag(engine: EngineKind, inputs: &VzFlagInputs) -> Option<&'stat
         return None;
     }
     let refused = [
-        (!inputs.env_set.is_empty(), "-e"),
-        (inputs.env_file.is_some(), "--env-file"),
         (!inputs.env_keys.is_empty(), "--env"),
-        (inputs.user.is_some(), "-u/--user"),
         (
-            !inputs.runflags.volumes.is_empty() || !inputs.runflags.named_volumes.is_empty(),
-            "-v/--volume",
+            !inputs.runflags.named_volumes.is_empty(),
+            "-v/--volume with a named volume",
         ),
         (!inputs.mounts_raw.is_empty(), "--mount"),
-        (inputs.workdir.is_some(), "-w/--workdir"),
         (inputs.rc.hostname.is_some(), "--hostname"),
         (!inputs.runflags.dns.is_empty(), "--dns"),
         (!inputs.runflags.add_host.is_empty(), "--add-host"),
@@ -60,6 +54,19 @@ fn vz_unapplied_flag(engine: EngineKind, inputs: &VzFlagInputs) -> Option<&'stat
         .map(|(_, flag)| flag)
 }
 
+/// `Some(2)` when the spec needs `init_abi` 2 (`-u`/image USER, `-v`,
+/// `--shm-size`) and the installed pack's init is older. No pack ⇒ `None`
+/// (the engine's own "vz unavailable" error speaks then).
+pub(super) fn vz_init_abi_policy(needs_abi2: bool) -> Option<i32> {
+    let dir = lightr_engine::pack::installed_pack_dir();
+    if !needs_abi2 || !dir.join("initrd").exists() {
+        return None;
+    }
+    lightr_engine::pack::require_init_abi(&dir, lightr_engine::INIT_ABI)
+        .err()
+        .map(|e| crate::exit::die_lightr(&e))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -67,11 +74,7 @@ mod tests {
 
     fn inputs<'a>(runflags: &'a RunFlags, rc: &'a RcConfig) -> VzFlagInputs<'a> {
         VzFlagInputs {
-            env_set: &[],
-            env_file: None,
             env_keys: &[],
-            user: None,
-            workdir: None,
             mounts_raw: &[],
             runflags,
             rc,
@@ -97,14 +100,8 @@ mod tests {
     }
 
     #[test]
-    fn env_flags_are_refused_on_vz() {
-        let env = ["K=V".to_string()];
+    fn env_keys_are_still_refused_on_vz() {
         let keys = ["HOME".to_string()];
-        assert_eq!(refused(EngineKind::Vz, |i| i.env_set = &env), Some("-e"));
-        assert_eq!(
-            refused(EngineKind::Vz, |i| i.env_file = Some("f.env")),
-            Some("--env-file")
-        );
         assert_eq!(
             refused(EngineKind::Vz, |i| i.env_keys = &keys),
             Some("--env")
@@ -112,21 +109,12 @@ mod tests {
     }
 
     #[test]
-    fn user_and_workdir_are_refused_on_vz() {
-        assert_eq!(
-            refused(EngineKind::Vz, |i| i.user = Some("1000:1000")),
-            Some("-u/--user")
-        );
-        assert_eq!(
-            refused(EngineKind::Vz, |i| i.workdir = Some("/srv")),
-            Some("-w/--workdir")
-        );
-    }
-
-    #[test]
-    fn volumes_and_mounts_are_refused_on_vz() {
+    fn host_dir_volumes_pass_named_volumes_and_mounts_are_refused_on_vz() {
         let rc = RcConfig::default();
-        for volume in ["/tmp:/data:ro", "cache:/cache"] {
+        for (volume, expected) in [
+            ("/tmp:/data:ro", None),
+            ("cache:/cache", Some("-v/--volume with a named volume")),
+        ] {
             let runflags = RawRunFlags {
                 volume: vec![volume.to_string()],
                 ..RawRunFlags::default()
@@ -135,7 +123,7 @@ mod tests {
             .unwrap();
             assert_eq!(
                 vz_unapplied_flag(EngineKind::Vz, &inputs(&runflags, &rc)),
-                Some("-v/--volume"),
+                expected,
                 "{volume}"
             );
         }
@@ -180,8 +168,7 @@ mod tests {
     fn other_engines_are_not_judged_here() {
         let env = ["K=V".to_string()];
         for engine in [EngineKind::Native, EngineKind::Ns, EngineKind::Wsl] {
-            assert_eq!(refused(engine, |i| i.env_set = &env), None);
-            assert_eq!(refused(engine, |i| i.user = Some("1000")), None);
+            assert_eq!(refused(engine, |i| i.env_keys = &env), None);
         }
     }
 
@@ -190,7 +177,8 @@ mod tests {
         let (runflags, rc) = (RunFlags::default(), RcConfig::default());
         let mut set = inputs(&runflags, &rc);
         assert_eq!(vz_unapplied_flags_policy(EngineKind::Vz, &set), None);
-        set.workdir = Some("/srv");
+        let mounts = ["ref:target".to_string()];
+        set.mounts_raw = &mounts;
         assert_eq!(vz_unapplied_flags_policy(EngineKind::Vz, &set), Some(2));
     }
 
@@ -199,12 +187,12 @@ mod tests {
     #[test]
     fn run_refuses_vz_flags_on_foreground_and_detached_paths() {
         use crate::handlers::run::{run, HealthFlags, RawRcFlags};
-        let env = ["K=V".to_string()];
+        let keys = ["HOME".to_string()];
         for detach in [false, true] {
             let code = run(
                 ".",
                 &[],
-                &[],
+                &keys, // --env (host-env memo keys): still dropped on vz
                 &["true".to_string()],
                 false,
                 false,
@@ -220,9 +208,9 @@ mod tests {
                 None,
                 &[],
                 &[],
-                &env, // -e
+                &[],
                 None,
-                Some("/srv"), // -w
+                None,
                 None,
                 None,
                 None,
@@ -230,7 +218,7 @@ mod tests {
                 RawRcFlags::default(),
                 RawRunFlags::default(),
             );
-            assert_eq!(code, 2, "vz -e/-w must exit 2 (detach={detach})");
+            assert_eq!(code, 2, "vz --env must exit 2 (detach={detach})");
         }
     }
 }

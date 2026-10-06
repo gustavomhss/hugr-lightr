@@ -12,8 +12,8 @@ mod vz_impl {
     use crate::engine::{ResumedInstance, SuspendResume, SuspendedArtifact};
     use lightr_core::{LightrError, Result};
     use lightr_init::{
-        InitSpec, CMD_FILE, EXIT_FILE, GUEST_PATH, SUSPEND_GATE_FILE, SUSPEND_READY_FILE,
-        SUSPEND_RELEASE_FILE, WORKLOAD_PID_FILE,
+        InitSpec, CMD_FILE, EXIT_FILE, GUEST_PATH, INIT_ERROR_FILE, SUSPEND_GATE_FILE,
+        SUSPEND_READY_FILE, SUSPEND_RELEASE_FILE, WORKLOAD_PID_FILE,
     };
     use std::ffi::CString;
 
@@ -80,6 +80,9 @@ mod vz_impl {
             cpu_count: u64,
             net_fd: libc::c_int,
             net_mac: *const libc::c_char,
+            vol_count: libc::c_int,
+            vol_paths: *const *const libc::c_char,
+            vol_readonly: *const u8,
             argc: libc::c_int,
             argv: *const *const libc::c_char,
         ) -> libc::c_int;
@@ -161,23 +164,25 @@ mod vz_impl {
             // on the shared (writable) rootfs virtiofs share (decisions-log
             // 2026-06-12): the host writes the command to CMD_FILE here; the guest
             // PID1 reads it, runs it, and writes its REAL exit code to EXIT_FILE,
-            // which the host reads back after the VM stops. cwd "/" + a minimal
-            // PATH is the guest environment (ExecSpec.cwd is a host path).
+            // which the host reads back after the VM stops.
+            //
+            // ADR-0024 D4: env (GUEST_PATH < image ENV < -e, HOME default), user
+            // (resolved against the image's passwd/group), workdir, volumes and
+            // shm size are applied by the guest; every refusal (bad -u, bad -v,
+            // relative -w, an init too old for the spec) happens here, before
+            // the VM exists.
             let cmd_path = rootfs.join(CMD_FILE.trim_start_matches('/'));
             let exit_path = rootfs.join(EXIT_FILE.trim_start_matches('/'));
-            // A stale exit file from a prior run must not be read as this run's
-            // result — clear it before boot.
+            let init_error_path = rootfs.join(INIT_ERROR_FILE.trim_start_matches('/'));
+            let (init_spec, volumes) = crate::engine::vzguest::build_init_spec(spec, rootfs)?;
+            crate::pack::require_init_abi(
+                &dir,
+                crate::engine::vzguest::required_init_abi(&init_spec),
+            )?;
+            // A stale exit or init-error file from a prior run must not be read
+            // as this run's result — clear both before boot.
             let _ = std::fs::remove_file(&exit_path);
-            let init_spec = InitSpec {
-                command: spec.command.to_vec(),
-                cwd: "/".to_string(),
-                env: vec![("PATH".to_string(), GUEST_PATH.to_string())],
-                // WP-NET2: when the run wants networking, the guest publishes its
-                // DHCP IP to IP_FILE before spawning the (possibly long-running)
-                // command, so the host supervisor can forward published ports.
-                net: spec.net,
-                suspend_gate: false,
-            };
+            let _ = std::fs::remove_file(&init_error_path);
             std::fs::write(&cmd_path, init_spec.to_json()).map_err(LightrError::Io)?;
 
             // WP-NET2: a networked run needs the shim to attach the NAT NIC +
@@ -248,6 +253,15 @@ mod vz_impl {
             });
             let net_mac_ptr: *const libc::c_char =
                 net_mac_c.as_ref().map_or(std::ptr::null(), |c| c.as_ptr());
+            // ADR-0024 D4 `-v`: one extra virtiofs share per volume, tag volN in
+            // order (the guest mounts InitSpec.volumes by the same tags).
+            let vol_cstrings: Vec<CString> = volumes
+                .iter()
+                .map(|v| path_to_cstr(&v.host))
+                .collect::<Result<_>>()?;
+            let vol_ptrs: Vec<*const libc::c_char> =
+                vol_cstrings.iter().map(|c| c.as_ptr()).collect();
+            let vol_readonly: Vec<u8> = volumes.iter().map(|v| u8::from(v.readonly)).collect();
             let vm_status = unsafe {
                 lightr_vz_run(
                     kernel_c.as_ptr(),
@@ -258,6 +272,9 @@ mod vz_impl {
                     cpu_count,
                     net_fd,
                     net_mac_ptr,
+                    vol_ptrs.len() as libc::c_int,
+                    vol_ptrs.as_ptr(),
+                    vol_readonly.as_ptr(),
                     argv_ptrs.len() as libc::c_int - 1, // exclude null sentinel
                     argv_ptrs.as_ptr(),
                 )
@@ -284,6 +301,11 @@ mod vz_impl {
                     }
                 }
                 std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+            // ADR-0024 D4: a failed guest setup writes no EXIT_FILE (255) but
+            // names its failing step; surface it so 255 is never unexplained.
+            if let Ok(reason) = std::fs::read_to_string(&init_error_path) {
+                eprintln!("lightr: vz guest init failed: {}", reason.trim());
             }
             Ok(GUEST_NO_REPORT_CODE)
         }
@@ -327,6 +349,9 @@ mod vz_impl {
                     env: vec![("PATH".to_string(), GUEST_PATH.to_string())],
                     net: spec.net,
                     suspend_gate: true,
+                    user: None,
+                    volumes: Vec::new(),
+                    shm_size: None,
                 }
                 .to_json(),
             )
@@ -879,6 +904,27 @@ mod tests {
             !resume_has_retained_token_check(&mutated),
             "removing retained-token comparison must fail this test"
         );
+    }
+
+    /// ADR-0024 D4: the guest spec, its refusals and the init_abi check all
+    /// precede the CMD_FILE write and the boot; the shim adds one tagged
+    /// virtiofs share per volume with the host-side read-only flag.
+    #[test]
+    fn run_resolves_and_checks_the_guest_spec_before_boot() {
+        let src = include_str!("vz.rs");
+        let implementation = &src[..src.find("\n    #[cfg(test)]").unwrap()];
+        let run = &implementation[implementation.find("fn run(&self, spec").unwrap()
+            ..implementation.find("fn suspend(").unwrap()];
+        let build = run.find("vzguest::build_init_spec(spec, rootfs)?").unwrap();
+        let abi = run.find("crate::pack::require_init_abi(").unwrap();
+        let write = run.find("init_spec.to_json()").unwrap();
+        let boot = run.find("lightr_vz_run(").unwrap();
+        assert!(build < abi && abi < write && write < boot);
+        assert!(run.contains("vol_ptrs.as_ptr()") && run.contains("vol_readonly.as_ptr()"));
+        let shim = include_str!("../../shim/vz.swift");
+        assert!(shim.contains("volCount: Int32"));
+        assert!(shim.contains(r#"VZVirtioFileSystemDeviceConfiguration(tag: "vol\(i)")"#));
+        assert!(shim.contains("readOnly: readOnly)"));
     }
 
     fn resume_has_retained_token_check(src: &str) -> bool {

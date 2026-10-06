@@ -105,7 +105,8 @@ scripts/config \
     --enable VIRTIO_BLK --enable VIRTIO_NET --enable VIRTIO_FS --enable FUSE_FS \
     --enable BLK_DEV_INITRD --enable DEVTMPFS --enable DEVTMPFS_MOUNT \
     --enable PRINTK --enable TTY \
-    --enable IP_PNP --enable IP_PNP_DHCP
+    --enable IP_PNP --enable IP_PNP_DHCP \
+    --enable TMPFS --enable UNIX98_PTYS --enable VSOCKETS --enable VIRTIO_VSOCKETS
 make olddefconfig >/dev/null
 echo "[config] boot-critical options:"
 grep -E "^CONFIG_(PVH|VIRTIO_PCI|VIRTIO_CONSOLE|VIRTIO_FS|FUSE_FS|BLK_DEV_INITRD|DEVTMPFS)=" .config
@@ -119,6 +120,12 @@ grep -q "^CONFIG_IP_PNP_DHCP=y" .config || { echo "[config] MISSING: CONFIG_IP_P
 # NIC — VZ exposes it as virtio-pci too). Without it neither NIC appears, so no
 # boot IP on either. Fail closed.
 grep -q "^CONFIG_VIRTIO_NET=y"  .config || { echo "[config] MISSING: CONFIG_VIRTIO_NET=y"  >&2; exit 1; }
+# ADR-0024 D5: the guest init mounts devtmpfs, devpts (UNIX98_PTYS; the
+# DEVPTS_FS symbol no longer exists) and tmpfs (/dev/shm, /tmp) and fails the
+# boot closed without them; exec rides virtio-vsock. Never rely on defconfig.
+for opt in DEVTMPFS TMPFS UNIX98_PTYS VSOCKETS VIRTIO_VSOCKETS; do
+    grep -q "^CONFIG_${opt}=y" .config || { echo "[config] MISSING: CONFIG_${opt}=y" >&2; exit 1; }
+done
 make -j"$(nproc)" vmlinux bzImage 2>&1 | tail -4
 cp vmlinux /out/vmlinux
 cp arch/x86/boot/bzImage /out/bzImage

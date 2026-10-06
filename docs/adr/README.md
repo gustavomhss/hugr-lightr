@@ -29,4 +29,4 @@ the batch acceptance of 0001/0002/0004/0006/0007 were Accepted under the
 | [0021](0021-oci-layer-confinement.md) | OCI layer confinement and typed-link preservation | Accepted (owner Unix-first decision [2026-09-27](https://github.com/gmhelmold/hugr-lightr/issues/242#issuecomment-5854246940); [cleanup threat model](https://github.com/gmhelmold/hugr-lightr/issues/242#issuecomment-5857697058)); macOS/Linux target release scope pending #242 evidence, Windows OCI import fails closed with `Unsupported` |
 | [0022](0022-atomic-oci-publication-envelope.md) | Atomic OCI image publication envelope | Accepted (owner authorized 2026-09-27) |
 | [0023](0023-native-explicit-env-cache.md) | Native explicit env and legacy cache isolation | Accepted (owner authorized 2026-10-02) |
-| [0024](0024-vz-guest-exec-and-init.md) | `vz` guest exec over virtio-vsock and container-like guest init | **Proposed** (2026-10-05) |
+| [0024](0024-vz-guest-exec-and-init.md) | `vz` guest exec over virtio-vsock and container-like guest init | Accepted (owner authorized 2026-10-06) |

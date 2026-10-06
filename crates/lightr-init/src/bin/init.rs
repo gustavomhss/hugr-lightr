@@ -11,11 +11,18 @@ fn main() -> std::process::ExitCode {
     linux::main()
 }
 
+// Linux syscalls of the guest setup and the reaper (split for the file cap).
+#[cfg(target_os = "linux")]
+#[path = "init_sys/mod.rs"]
+mod sys;
+
 #[cfg(target_os = "linux")]
 mod linux {
+    use super::sys::{loopback_up, mount_step, reap_until};
     use lightr_init::{
-        run_init, ExitSink, GuestOps, InitSpec, SuspendGate, CMD_FILE, EXIT_FILE, IP_FILE,
-        ROOTFS_DEST, ROOTFS_TAG, STDERR_FILE, STDOUT_FILE, SUSPEND_GATE_FILE, SUSPEND_READY_FILE,
+        describe_step, guest_setup_plan, run_init, ExitSink, GuestOps, GuestUser, InitSpec,
+        SetupStep, SuspendGate, CMD_FILE, EXIT_FILE, INIT_ERROR_FILE, IP_FILE, ROOTFS_DEST,
+        ROOTFS_TAG, STDERR_FILE, STDOUT_FILE, SUSPEND_GATE_FILE, SUSPEND_READY_FILE,
         SUSPEND_RELEASE_FILE,
     };
     use std::ffi::CString;
@@ -40,7 +47,18 @@ mod linux {
                 let _ = out.flush();
             }
             Err(e) => {
+                // Fail closed (ADR-0024 D4): no EXIT_FILE, so the host reports
+                // 255. The marker names the cause on the console; the error file
+                // carries it to the host when the rootfs share is entered (the
+                // memo path silences the console).
                 eprintln!("lightr-init: boot failed: {e}");
+                let mut out = io::stdout();
+                let _ = writeln!(out, "LIGHTR_INIT_FAILED:{e}");
+                let _ = out.flush();
+                if let Ok(mut f) = std::fs::File::create(INIT_ERROR_FILE) {
+                    let _ = write!(f, "{e}");
+                    let _ = f.sync_all();
+                }
             }
         }
         sync_and_poweroff()
@@ -95,11 +113,34 @@ mod linux {
             Ok(())
         }
 
+        fn setup_guest(&mut self, spec: &InitSpec) -> io::Result<()> {
+            // ADR-0024 D4: run the plan in order, stop at the first failed step
+            // and name it (the boot then fails closed, no EXIT_FILE).
+            for step in guest_setup_plan(spec.shm_size, &spec.volumes) {
+                let result = match &step {
+                    SetupStep::Mount(m) => mount_step(m),
+                    SetupStep::Symlink { target, link } => {
+                        let _ = std::fs::remove_file(link);
+                        std::os::unix::fs::symlink(target, link)
+                    }
+                    SetupStep::LoopbackUp => loopback_up(),
+                };
+                result.map_err(|e| {
+                    io::Error::new(
+                        e.kind(),
+                        format!("guest setup: {}: {e}", describe_step(&step)),
+                    )
+                })?;
+            }
+            Ok(())
+        }
+
         fn spawn_wait(
             &mut self,
             cmd: &[String],
             cwd: &str,
             env: &[(String, String)],
+            user: Option<&GuestUser>,
             pid_proof: Option<&SuspendGate>,
         ) -> io::Result<i32> {
             // BOOT-PATH: std::process drives fork/exec/waitpid. spawn() surfaces
@@ -116,6 +157,16 @@ mod linux {
             // AFTER wait(); the originals are moved into the child's stdio. The
             // files resolve inside the rootfs (PID1 has chrooted) → the rootfs
             // share root → the host's materialized rootfs dir, like EXIT_FILE.
+            // `-w`: a missing working directory is a start failure (126), not a
+            // "command not found" (std reports a failed chdir as the errno).
+            let cwd = if cwd.is_empty() { "/" } else { cwd };
+            if !std::path::Path::new(cwd).is_dir() {
+                return Err(io::Error::new(
+                    io::ErrorKind::NotADirectory,
+                    format!("working directory {cwd} is not a directory"),
+                ));
+            }
+
             let stdout_file = std::fs::File::create(STDOUT_FILE)?;
             let stderr_file = std::fs::File::create(STDERR_FILE)?;
             let stdout_sync = stdout_file.try_clone()?;
@@ -123,13 +174,32 @@ mod linux {
 
             let mut c = std::process::Command::new(&cmd[0]);
             c.args(&cmd[1..])
-                .current_dir(if cwd.is_empty() { "/" } else { cwd })
+                .current_dir(cwd)
                 .env_clear()
                 .envs(env.iter().cloned())
                 .stdout(std::process::Stdio::from(stdout_file))
                 .stderr(std::process::Stdio::from(stderr_file));
 
-            let mut child = c.spawn()?;
+            if let Some(user) = user.cloned() {
+                use std::os::unix::process::CommandExt;
+                // `-u`: drop root in the child before exec, groups first. A
+                // failure aborts the exec (spawn returns the errno, 126), so the
+                // workload never runs as root by accident. The Vec is moved in
+                // before fork; the closure only makes syscalls.
+                unsafe {
+                    c.pre_exec(move || {
+                        if libc::setgroups(user.groups.len() as _, user.groups.as_ptr()) != 0
+                            || libc::setgid(user.gid) != 0
+                            || libc::setuid(user.uid) != 0
+                        {
+                            return Err(io::Error::last_os_error());
+                        }
+                        Ok(())
+                    });
+                }
+            }
+
+            let child = c.spawn()?;
             // Snapshot resume proof, only for a gated run: after exact gate
             // release and before waiting, so the host can establish a real guest
             // workload PID. An ordinary run has no gate file and writes no proof.
@@ -144,7 +214,7 @@ mod linux {
                 )?;
                 pid.sync_all()?;
             }
-            let status = child.wait()?;
+            let status = reap_until(child.id() as libc::pid_t)?;
 
             // CRITICAL ORDERING: make the capture files durable on virtiofs BEFORE
             // run_init reports the exit (which the host taps via the console
@@ -155,7 +225,7 @@ mod linux {
             stdout_sync.sync_all()?;
             stderr_sync.sync_all()?;
 
-            Ok(exit_code(status))
+            Ok(status)
         }
 
         fn publish_ip(&mut self) -> io::Result<()> {
@@ -254,18 +324,6 @@ mod linux {
             }
             libc::freeifaddrs(ifap);
             found.ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no non-loopback IPv4"))
-        }
-    }
-
-    /// Map an `ExitStatus` to an exit code (128+signal on signal termination).
-    fn exit_code(status: std::process::ExitStatus) -> i32 {
-        use std::os::unix::process::ExitStatusExt;
-        if let Some(code) = status.code() {
-            code
-        } else if let Some(sig) = status.signal() {
-            128 + sig
-        } else {
-            1
         }
     }
 

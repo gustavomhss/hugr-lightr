@@ -4,22 +4,31 @@
 use std::io::Write;
 
 use lightr_core::ResourceLimits;
-use lightr_engine::{engine_for, EngineKind, ExecSpec};
-use lightr_run::{run_vz_memoized, VzMemoKey};
+use lightr_engine::{engine_for, EngineKind, ExecSpec, ResolvedMount};
+use lightr_run::{run_vz_memoized_with, VzMemoKey};
 use lightr_store::Store;
 
 use crate::exit::die_lightr;
 
+use super::super::vz_guest::VzGuestRun;
 use super::super::RunJson;
 
 // ── vz-memo path (the product's core moat) ───────────────────────────────────
 // A non-detached `vz` rootfs run is MEMOIZABLE like the native path (see the
 // module doc): 1st run boots the VM + captures {exit,stdout,stderr}; an
 // identical 2nd run is a HIT replayed from the AC with NO VM boot.
+//
+// ADR-0024 D4: `guest` carries the resolved argv/env/user/workdir (image config
+// < CLI), `volumes` the `-v` host dirs, `shm_size` the `--shm-size`. All but
+// the volumes enter the key; a run with volumes is never replayed nor stored
+// (live host dirs are not content-addressed).
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn run_vz_memo(
     engine_kind: EngineKind,
     ref_name: &str,
-    command: &[String],
+    guest: &VzGuestRun,
+    volumes: &[ResolvedMount],
+    shm_size: Option<u64>,
     store: &Store,
     cwd: &std::path::Path,
     limits: ResourceLimits,
@@ -37,20 +46,19 @@ pub(crate) fn run_vz_memo(
         Err(e) => return die_lightr(&e),
     };
 
-    // 2. The vz engine injects exactly this env into the guest (a fixed
-    //    PATH; it does not inherit the host env). The memo key must use the
-    //    SAME env so the key and the executed environment agree. Keep this
-    //    in lock-step with VzEngine::run in crates/lightr-engine/src/lib.rs.
-    // The memo key hashes the SAME PATH the vz engine injects into the guest
-    // command — one source of truth (lightr_engine::GUEST_PATH, re-exported
-    // from lightr_init) so the key can never drift from the actual env.
-    let vz_env: Vec<(String, String)> =
-        vec![("PATH".to_string(), lightr_engine::GUEST_PATH.to_string())];
-
+    // 2. Key on what the guest applies: the effective argv, the env exactly as
+    //    the engine builds it (GUEST_PATH < image ENV < -e; one function,
+    //    `vzguest::guest_env`, so key and guest cannot drift), and the raw
+    //    user/workdir/shm inputs. HOME derives from user + the image's passwd,
+    //    both covered (rootfs_digest).
+    let command = guest.argv.as_slice();
     let key = VzMemoKey {
         command: command.to_vec(),
         rootfs_digest,
-        env: vz_env,
+        env: lightr_engine::engine::vzguest::guest_env(&guest.env),
+        user: guest.user.clone(),
+        workdir: guest.workdir.clone(),
+        shm_size,
     };
 
     // 3. Memoize. On a HIT the closure is never invoked (no VM boot). On a
@@ -59,7 +67,7 @@ pub(crate) fn run_vz_memo(
     //    rootfs share (with a brief retry for virtiofs flush lag — the same
     //    pattern the engine uses for EXIT_FILE).
     let cwd_buf = cwd.to_path_buf();
-    let outcome = run_vz_memoized(&key, store, || {
+    let outcome = run_vz_memoized_with(&key, store, volumes.is_empty(), || {
         // Hydrate the rootfs ref CoW into a temp dir for this boot.
         let tmp = tempfile::TempDir::new().map_err(lightr_core::LightrError::Io)?;
         lightr_index::hydrate(tmp.path(), store, ref_name)?;
@@ -75,18 +83,18 @@ pub(crate) fn run_vz_memo(
             net_isolate: false, // vz isolates via its VM; no netns flag needed
             net_fd: None,       // no mesh NIC on the memo path (ADR-0018)
             net_mac: None,
-            mounts: &[],
-            env: &[],
-            workdir: None,
-            user: None,
+            mounts: volumes,
+            env: &guest.env,
+            workdir: guest.workdir.as_deref(),
+            user: guest.user.as_deref(),
             hostname: None,
             add_host: &[],
             dns: &[],
             mesh_ip: None,
-            // WP-#92: the vz-memo path does not enforce these (vz is its own VM);
-            // the ns engine is where --read-only/--shm-size gain teeth.
+            // WP-#92: --read-only is not applied on vz (its own VM). ADR-0024 D4:
+            // --shm-size sizes the guest /dev/shm tmpfs.
             read_only: false,
-            shm_size: None,
+            shm_size,
             // WP-#94: capability enforcement is the ns engine's job; the vz-memo
             // path is its own VM. Defaults (no cap changes).
             cap_drop: &[],

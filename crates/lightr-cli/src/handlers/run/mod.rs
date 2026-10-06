@@ -34,6 +34,7 @@ mod paths;
 pub(crate) mod policy;
 mod policy_vz;
 mod runflags;
+mod vz_guest;
 
 // Value parsers (`--tmpfs`/`--ulimit`/`size=`) split to `parse.rs` (godfile cap).
 use parse::{parse_tmpfs, parse_ulimits};
@@ -54,6 +55,7 @@ pub use flags::{HealthFlags, RawRcFlags};
 // WP-RUNFLAGS: `-v/--volume`, `--tmpfs`, `--name`, `--rm`, `--entrypoint` (+
 // honest Phase-2 networking flags) bundle, resolved into RunSpec carry-fields.
 pub use runflags::RawRunFlags;
+use runflags::RunFlags;
 
 #[cfg(test)]
 mod tests;
@@ -158,14 +160,11 @@ pub fn run(
     if let Some(code) = policy::vz_mount_policy(engine_kind, &runflags) {
         return code;
     }
-    // ADR-0024 stage 2: vz drops env/user/volumes/workdir/hostname/DNS/hosts today;
-    // refuse them (exit 2) on the foreground and detached vz paths alike.
+    // ADR-0024: vz applies -e/--env-file/-u/-w/-v host dirs (D4); it still drops
+    // --env keys, named volumes, --mount, --hostname, --dns and --add-host, so
+    // those exit 2 on the foreground and detached vz paths alike.
     let vz_flags = policy_vz::VzFlagInputs {
-        env_set,
-        env_file,
         env_keys,
-        user,
-        workdir,
         mounts_raw,
         runflags: &runflags,
         rc: &rc,
@@ -263,15 +262,52 @@ pub fn run(
     // A `vz`+rootfs job that is NOT detached is MEMOIZABLE like the native path: the
     // 1st run boots the VM + captures {exit, stdout, stderr}; an identical 2nd run is
     // a HIT replayed from the Action Cache with NO VM boot. Other cases fall through.
-    if let (EngineKind::Vz, Some(ref_name), false) = (engine_kind, rootfs_ref, detach) {
-        return paths::run_vz_memo(engine_kind, ref_name, command, &store, &cwd, limits, json);
+    // ADR-0024 D4: both vz paths apply the image config (ENTRYPOINT/CMD, ENV,
+    // USER, WORKDIR) under the CLI flags; resolved here, before any VM boots,
+    // so an unresolvable user fails now.
+    let vz_guest = match (engine_kind, rootfs_ref) {
+        (EngineKind::Vz, Some(ref_name)) => match vz_guest::resolve_vz_guest(
+            &store,
+            ref_name,
+            command,
+            runflags.entrypoint.as_deref(),
+            &env_explicit,
+            user,
+            workdir,
+        ) {
+            Ok(guest) => Some(guest),
+            Err(e) => return die_lightr(&e),
+        },
+        _ => None,
+    };
+    let vz_volumes = vz_guest::host_volumes(&runflags);
+
+    if let (Some(guest), Some(ref_name), false) = (&vz_guest, rootfs_ref, detach) {
+        return paths::run_vz_memo(
+            engine_kind,
+            ref_name,
+            guest,
+            &vz_volumes,
+            rc.shm_size,
+            &store,
+            &cwd,
+            limits,
+            json,
+        );
     }
 
     // ── vz detached container path (WP-NET2) ──────────────────────────────────
     // A `vz` run WITH a rootfs that IS detached boots a Linux container in a microVM
     // under the supervisor, which forwards each published port to the guest's DHCP IP
     // (`-p` — the flagship Docker-parity case). `spawn_detached_engine` returns at once.
-    if let (EngineKind::Vz, Some(ref_name), true) = (engine_kind, rootfs_ref, detach) {
+    if let (Some(guest), Some(ref_name), true) = (&vz_guest, rootfs_ref, detach) {
+        // ADR-0024 D4: an init too old for the spec fails here, not in the
+        // supervisor's log after `run -d` already printed an id.
+        if let Some(code) = policy_vz::vz_init_abi_policy(
+            guest.user.is_some() || !vz_volumes.is_empty() || rc.shm_size.is_some(),
+        ) {
+            return code;
+        }
         // WP-B2: range-aware `-p` (`8000-8002:8000-8002` ⇒ 3 maps; `127.0.0.1:H:C`
         // ⇒ loopback) + `-P/--publish-all` (auto-publish the image's EXPOSE list,
         // de-duplicated against explicit `-p` host ports). Fail-closed on a bad spec.
@@ -282,17 +318,23 @@ pub fn run(
         };
         // Build the RunSpec persisted to spec.json (pure value builder — folds the
         // parsed inputs + resolved rc/runflags carry-fields; byte-identical).
+        // spec.json carries the EFFECTIVE guest values (the supervisor applies
+        // them as-is); `--entrypoint` is already folded into the argv.
+        let runflags = RunFlags {
+            entrypoint: None,
+            ..runflags
+        };
         let spec = policy::build_detached_spec(
             cwd,
-            command,
+            &guest.argv,
             env_keys,
             mounts,
             secrets,
             configs,
             ports,
-            env_explicit,
-            workdir,
-            user,
+            guest.env.clone(),
+            guest.workdir.as_deref(),
+            guest.user.as_deref(),
             restart,
             stop_signal,
             limits,

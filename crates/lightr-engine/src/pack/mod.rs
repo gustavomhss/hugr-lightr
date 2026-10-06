@@ -59,6 +59,11 @@ pub struct PackManifest {
     pub kernel_version: Option<String>,
     /// Lowercase-hex SHA-256 of the init binary embedded as `/init`.
     pub init_sha256: String,
+    /// The `InitSpec` contract the embedded init implements
+    /// (`lightr_init::INIT_ABI`). Absent in packs built before ADR-0024
+    /// stage 3-4, which [`installed_init_abi`] reads as 1.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub init_abi: Option<u32>,
 }
 
 /// Result of [`verify_pack`]: a pack's structural facts, gathered without
@@ -112,6 +117,9 @@ pub fn assemble_pack(
         arch: arch.to_string(),
         kernel_version: kernel_version.map(str::to_string),
         init_sha256: sha256_hex(&init_bytes),
+        // The init is built from this same tree (scripts/build-linux-pack.sh,
+        // the s5 runbooks); its contract version is this crate's INIT_ABI.
+        init_abi: Some(lightr_init::INIT_ABI),
     };
     let json = serde_json::to_string_pretty(&manifest)
         .map_err(|e| LightrError::InvalidManifest(format!("pack.json serialize: {e}")))?;
@@ -192,6 +200,42 @@ pub fn verify_pack(dir: &Path) -> Result<PackInfo> {
         init_executable,
         kernel_bytes,
     })
+}
+
+/// The installed pack the vz engine boots (`LIGHTR_LINUX_PACK`, else
+/// `$LIGHTR_HOME/packs/linux`), for callers that check it before a boot.
+pub fn installed_pack_dir() -> std::path::PathBuf {
+    crate::engine::probe::pack_dir()
+}
+
+/// The `init_abi` of the pack in `dir`: `pack.json`'s field, or 1 when the
+/// manifest or the field is absent (packs older than the field). A malformed
+/// manifest is an error, never a guess.
+pub fn installed_init_abi(dir: &Path) -> Result<u32> {
+    let path = dir.join("pack.json");
+    let bytes = match std::fs::read(&path) {
+        Ok(bytes) => bytes,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(1),
+        Err(e) => return Err(LightrError::Io(e)),
+    };
+    let manifest: PackManifest = serde_json::from_slice(&bytes).map_err(|e| {
+        LightrError::InvalidManifest(format!("pack.json at {} is malformed: {e}", path.display()))
+    })?;
+    Ok(manifest.init_abi.unwrap_or(1))
+}
+
+/// Fail closed when the pack in `dir` cannot honour a spec needing `required`
+/// (ADR-0024 D4: an old init would silently ignore the newer fields).
+pub fn require_init_abi(dir: &Path, required: u32) -> Result<()> {
+    let installed = installed_init_abi(dir)?;
+    if installed >= required {
+        return Ok(());
+    }
+    Err(LightrError::Unsupported(format!(
+        "linux pack too old, reinstall: its init implements init_abi {installed}, this run \
+         needs {required} (-u, -v or --shm-size). Rebuild the pack from this release \
+         (scripts/build-linux-pack.sh) and run `lightr engine install-pack <dir>`"
+    )))
 }
 
 /// Lowercase-hex SHA-256 of `bytes`.
