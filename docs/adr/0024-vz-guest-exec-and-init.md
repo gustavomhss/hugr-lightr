@@ -1,7 +1,7 @@
 # ADR-0024 — `vz` guest exec over virtio-vsock and a container-like guest init
 
-- **Status:** Proposed (2026-10-05). Not accepted; write no code against it until the
-  owner accepts it.
+- **Status:** Accepted (owner decision, 2026-10-06; recorded answer: "Ja dei meu aceite
+  irmao, pode ir")
 - **Date:** 2026-10-05
 - **Scope:** macOS `vz` engine only: Swift shim, `lightr-init` (guest PID 1), detached
   `vz` supervisor, `lightr exec`, `vz` flag policy. `ns`/`native`/`wsl` and ADR-0018
