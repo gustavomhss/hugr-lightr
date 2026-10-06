@@ -21,6 +21,8 @@ pub mod spec;
 #[cfg(target_os = "linux")]
 pub(crate) mod subid;
 pub mod vz;
+/// ADR-0024 D4 host half: the guest spec a vz boot applies.
+pub mod vzguest;
 pub mod wsl;
 
 pub use kind::{EngineCaps, EngineKind};

@@ -105,6 +105,11 @@ private func cString(_ pointer: UnsafePointer<CChar>?) -> String? {
 ///               (today's single-NAT-NIC path).  The fd is owned by the caller
 ///               (the switch); we wrap it `closeOnDealloc:false` so a transient
 ///               FileHandle dealloc can't close it.
+///   - volCount / volPaths / volReadOnly: ADR-0024 D4 `-v`.  One extra
+///               virtiofs share per host directory, tagged `vol0..N` in order;
+///               the guest PID1 mounts them by tag.  `volReadOnly[i] != 0`
+///               makes share i read-only at the host.  The host validated each
+///               path is a directory before calling; VZ re-checks at validate().
 ///   - argc:    Number of arguments in argv.
 ///   - argv:    C argv array (argv[0] = program, …).
 ///
@@ -120,6 +125,9 @@ public func lightr_vz_run(
     cpuCount: UInt64,
     netFd:    Int32,
     netMac:   UnsafePointer<CChar>?,
+    volCount: Int32,
+    volPaths: UnsafePointer<UnsafePointer<CChar>?>?,
+    volReadOnly: UnsafePointer<UInt8>?,
     argc:     Int32,
     argv:     UnsafePointer<UnsafePointer<CChar>?>
 ) -> Int32 {
@@ -224,6 +232,21 @@ public func lightr_vz_run(
         let storeDev   = VZVirtioFileSystemDeviceConfiguration(tag: "store")
         storeDev.share = VZSingleDirectoryShare(directory: storeShare)
         storages.append(storeDev)
+    }
+
+    // ADR-0024 D4 volume shares (tags vol0..N). A NULL entry is a host bug:
+    // refuse the configuration rather than boot with a share missing.
+    for i in 0..<Int(max(volCount, 0)) {
+        guard let paths = volPaths, let p = paths[i] else {
+            fputs("lightr-vz-shim: volume \(i) has no host path\n", stderr)
+            return -1
+        }
+        let readOnly = (volReadOnly?[i] ?? 0) != 0
+        let share = VZSharedDirectory(url: URL(fileURLWithPath: String(cString: p)),
+                                      readOnly: readOnly)
+        let device = VZVirtioFileSystemDeviceConfiguration(tag: "vol\(i)")
+        device.share = VZSingleDirectoryShare(directory: share)
+        storages.append(device)
     }
 
     // ── 5. Serial console → host stdio (or a durable file for diagnosis) ─────

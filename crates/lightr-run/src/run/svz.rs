@@ -30,6 +30,7 @@ use super::types::SpecOnDisk;
 /// process, killing the supervisor tears the VM down too.
 #[cfg(unix)]
 pub(super) fn supervise_vz(dir: &std::path::Path, spec: &SpecOnDisk, store: &Store) -> Result<i32> {
+    use super::types::MountOnDisk2;
     use lightr_engine::{engine_for, EngineKind, ExecSpec};
     use lightr_init::{EXIT_FILE, IP_FILE};
     use std::io::{BufRead, BufReader, Write};
@@ -133,6 +134,20 @@ pub(super) fn supervise_vz(dir: &std::path::Path, spec: &SpecOnDisk, store: &Sto
     let add_host: Vec<(String, String)> = spec.add_host.clone();
     let dns: Vec<String> = spec.dns.clone();
     let hostname: Option<String> = spec.hostname.clone();
+    // ADR-0024 D4: the guest applies these. The CLI resolved the image config
+    // before spawning us (argv, env = image ENV < -e, user, workdir), so
+    // spec.json carries the effective values; the engine resolves `user`
+    // against this run's hydrated rootfs and refuses before boot.
+    let env: Vec<(String, String)> = spec.env_explicit.clone();
+    let user: Option<String> = spec.user.clone();
+    let workdir: Option<String> = spec.workdir.clone();
+    let shm_size: Option<u64> = spec.shm_size;
+    let mounts: Vec<lightr_engine::ResolvedMount> = spec
+        .mounts2
+        .iter()
+        .map(MountOnDisk2::to_engine_mount)
+        .collect();
+    let stderr_log = dir.join("stderr.log");
     // WP-RESLIMITS: read the persisted resource caps back from spec.json so the
     // VM is sized to them (`vz_caps`: a hard memory cap + ceil(cpus) vcpus). Both
     // `None` (unlimited) ⇒ the shim baseline, byte-identical to before.
@@ -170,10 +185,10 @@ pub(super) fn supervise_vz(dir: &std::path::Path, spec: &SpecOnDisk, store: &Sto
                         // unchanged. `None` ⇒ today's single-NAT-NIC path.
                         net_fd: mesh_fd,
                         net_mac: mesh_mac,
-                        mounts: &[],
-                        env: &[],
-                        workdir: None,
-                        user: None,
+                        mounts: &mounts,
+                        env: &env,
+                        workdir: workdir.as_deref(),
+                        user: user.as_deref(),
                         hostname: hostname.as_deref(),
                         add_host: &add_host,
                         dns: &dns,
@@ -181,7 +196,7 @@ pub(super) fn supervise_vz(dir: &std::path::Path, spec: &SpecOnDisk, store: &Sto
                         // WP-#92: the vz supervisor path is a microVM, not the ns
                         // engine; --read-only/--shm-size are ns-enforced. Defaults.
                         read_only: false,
-                        shm_size: None,
+                        shm_size,
                         // WP-#94: the vz supervisor path is a microVM; caps are an
                         // ns-engine concern. Defaults (no cap changes).
                         cap_drop: &[],
@@ -205,7 +220,19 @@ pub(super) fn supervise_vz(dir: &std::path::Path, spec: &SpecOnDisk, store: &Sto
                         // guest. None.
                         oom_score_adj: None,
                     };
-                    engine.run(&spec).unwrap_or(255)
+                    // A refusal before boot (bad -u/-v, pack too old) is logged
+                    // where `lightr logs --stderr` reads it, never swallowed.
+                    engine.run(&spec).unwrap_or_else(|e| {
+                        use std::io::Write as _;
+                        if let Ok(mut f) = std::fs::OpenOptions::new()
+                            .create(true)
+                            .append(true)
+                            .open(&stderr_log)
+                        {
+                            let _ = writeln!(f, "lightr: vz run failed: {e}");
+                        }
+                        255
+                    })
                 }
                 Err(_) => 255, // vz unavailable (non-macOS / no pack) → honest non-zero
             };

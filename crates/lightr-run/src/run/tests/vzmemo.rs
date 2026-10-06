@@ -3,7 +3,7 @@
 
 use crate::run::ac::decode_ac_record;
 use crate::run::types::VzMemoKey;
-use crate::run::vzmemo::{run_vz_memoized, vz_memo_key};
+use crate::run::vzmemo::{run_vz_memoized, run_vz_memoized_with, vz_memo_key};
 use lightr_core::OUTPUT_CAP_BYTES;
 use lightr_store::Store;
 
@@ -26,6 +26,9 @@ fn vz_key(command: Vec<&str>, rootfs: [u8; 32], env: Vec<(&str, &str)>) -> VzMem
             .into_iter()
             .map(|(k, v)| (k.to_string(), v.to_string()))
             .collect(),
+        user: None,
+        workdir: None,
+        shm_size: None,
     }
 }
 
@@ -258,5 +261,68 @@ fn run_vz_memoized_oversized_output_not_cached() {
     assert!(
         store.ac_get(&vz_memo_key(&key)).expect("ac_get").is_none(),
         "an over-cap stdout must not be cached"
+    );
+}
+
+// -----------------------------------------------------------------------
+// ADR-0024 D4: the key covers user, workdir and shm size; a run with live
+// host volumes is never replayed nor stored.
+// -----------------------------------------------------------------------
+#[test]
+fn vz_memo_key_covers_user_workdir_and_shm() {
+    let base = vz_key(vec!["id"], [7u8; 32], vec![("PATH", "/usr/bin")]);
+    let base_key = vz_memo_key(&base).0;
+    let variants: [fn(&mut VzMemoKey); 5] = [
+        |k| k.user = Some("1000".to_string()),
+        |k| k.user = Some(String::new()),
+        |k| k.workdir = Some("/srv".to_string()),
+        |k| k.shm_size = Some(0),
+        |k| k.shm_size = Some(1 << 20),
+    ];
+    let mut seen = vec![base_key];
+    for edit in variants {
+        let mut k = vz_key(vec!["id"], [7u8; 32], vec![("PATH", "/usr/bin")]);
+        edit(&mut k);
+        let key = vz_memo_key(&k).0;
+        assert!(
+            !seen.contains(&key),
+            "each field change must change the key"
+        );
+        seen.push(key);
+    }
+    // user/workdir cannot trade bytes across the boundary.
+    let mut a = vz_key(vec!["id"], [7u8; 32], vec![]);
+    a.user = Some("ab".to_string());
+    a.workdir = Some("c".to_string());
+    let mut b = vz_key(vec!["id"], [7u8; 32], vec![]);
+    b.user = Some("a".to_string());
+    b.workdir = Some("bc".to_string());
+    assert_ne!(vz_memo_key(&a).0, vz_memo_key(&b).0);
+}
+
+#[test]
+fn non_reproducible_vz_run_never_hits_nor_stores() {
+    let (home, _guard) = isolated_home();
+    let store = make_store(home.path());
+    let key = vz_key(vec!["cat", "/data/x"], [9u8; 32], vec![]);
+    let first = run_vz_memoized(&key, &store, || Ok((0, b"old".to_vec(), Vec::new()))).unwrap();
+    assert!(!first.hit);
+    let mut ran = false;
+    let out = run_vz_memoized_with(&key, &store, false, || {
+        ran = true;
+        Ok((0, b"new".to_vec(), Vec::new()))
+    })
+    .unwrap();
+    assert!(
+        ran && !out.hit,
+        "a volume run re-runs even with an AC entry"
+    );
+    assert_eq!(out.stdout, b"new");
+    let store2 = make_store(home.path());
+    let key2 = vz_key(vec!["cat", "/data/y"], [9u8; 32], vec![]);
+    run_vz_memoized_with(&key2, &store2, false, || Ok((0, b"v".to_vec(), Vec::new()))).unwrap();
+    assert!(
+        store2.ac_get(&vz_memo_key(&key2)).unwrap().is_none(),
+        "a volume run is never stored"
     );
 }

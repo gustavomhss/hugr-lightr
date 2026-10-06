@@ -12,7 +12,7 @@ pub mod pathres;
 /// the EXACT value the engine injects into the guest command — one source of
 /// truth (lightr_init::GUEST_PATH), so they can never drift and replay a HIT
 /// produced under a different environment.
-pub use lightr_init::GUEST_PATH;
+pub use lightr_init::{GuestUser, GUEST_PATH, INIT_ABI};
 
 // ── Flat re-exports (API-identical paths) ────────────────────────────────────
 

@@ -345,7 +345,8 @@ pub struct DeepMemoConfig {
 }
 
 /// Inputs that identify a memoizable `vz` container run. A different command,
-/// rootfs image, or env ⇒ a different run ⇒ a different key.
+/// rootfs image, env, user, workdir or `/dev/shm` size ⇒ a different run ⇒ a
+/// different key (ADR-0024 D4: the key covers what the guest applies).
 ///
 /// `rootfs_digest` is the resolved content digest of the rootfs image (the
 /// ref's current root), so two refs pointing at the same content share a memo
@@ -354,5 +355,14 @@ pub struct DeepMemoConfig {
 pub struct VzMemoKey {
     pub command: Vec<String>,
     pub rootfs_digest: lightr_core::Digest,
+    /// The guest env before `HOME` (`lightr_engine::vzguest::guest_env`).
+    /// `HOME` is derived from `user` and the image's passwd, both keyed.
     pub env: Vec<(String, String)>,
+    /// `-u` (or image `USER`) as given; its resolution reads the image, which
+    /// `rootfs_digest` covers.
+    pub user: Option<String>,
+    /// `-w` (or image `WORKDIR`); `None` ⇒ `/`.
+    pub workdir: Option<String>,
+    /// `--shm-size` bytes; `None` ⇒ the init default.
+    pub shm_size: Option<u64>,
 }
