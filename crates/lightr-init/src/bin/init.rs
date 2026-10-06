@@ -100,6 +100,7 @@ mod linux {
             cmd: &[String],
             cwd: &str,
             env: &[(String, String)],
+            pid_proof: Option<&SuspendGate>,
         ) -> io::Result<i32> {
             // BOOT-PATH: std::process drives fork/exec/waitpid. spawn() surfaces
             // ENOENT as an Err (run_init maps that to 127); wait() yields the real
@@ -129,19 +130,20 @@ mod linux {
                 .stderr(std::process::Stdio::from(stderr_file));
 
             let mut child = c.spawn()?;
-            // Snapshot resume proof: this is after exact gate release and before
-            // waiting, so host can establish a real guest workload PID.
-            let mut pid = std::fs::File::create(lightr_init::WORKLOAD_PID_FILE)?;
-            let gate: SuspendGate = serde_json::from_slice(&std::fs::read(SUSPEND_GATE_FILE)?)
-                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-            write!(
-                pid,
-                "{} {} {}",
-                gate.instance_id,
-                gate.release_token,
-                child.id()
-            )?;
-            pid.sync_all()?;
+            // Snapshot resume proof, only for a gated run: after exact gate
+            // release and before waiting, so the host can establish a real guest
+            // workload PID. An ordinary run has no gate file and writes no proof.
+            if let Some(gate) = pid_proof {
+                let mut pid = std::fs::File::create(lightr_init::WORKLOAD_PID_FILE)?;
+                write!(
+                    pid,
+                    "{} {} {}",
+                    gate.instance_id,
+                    gate.release_token,
+                    child.id()
+                )?;
+                pid.sync_all()?;
+            }
             let status = child.wait()?;
 
             // CRITICAL ORDERING: make the capture files durable on virtiofs BEFORE
@@ -169,7 +171,7 @@ mod linux {
             Ok(())
         }
 
-        fn await_suspend_release(&mut self) -> io::Result<()> {
+        fn await_suspend_release(&mut self) -> io::Result<SuspendGate> {
             let bytes = std::fs::read(SUSPEND_GATE_FILE)?;
             let gate: SuspendGate = serde_json::from_slice(&bytes)
                 .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
@@ -184,7 +186,7 @@ mod linux {
             loop {
                 if let Ok(token) = std::fs::read_to_string(SUSPEND_RELEASE_FILE) {
                     if token == gate.release_token {
-                        return Ok(());
+                        return Ok(gate);
                     }
                     return Err(io::Error::new(
                         io::ErrorKind::PermissionDenied,

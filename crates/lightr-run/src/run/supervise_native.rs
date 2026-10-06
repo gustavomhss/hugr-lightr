@@ -17,6 +17,7 @@ use lightr_core::{LightrError, Result};
 use lightr_store::Store;
 use std::path::PathBuf;
 
+#[cfg(windows)]
 use super::ctl::ctl_sock_path;
 use super::memo::validate_mount_target;
 use super::respawn;
@@ -42,6 +43,12 @@ pub(super) fn supervise_native(
                 .to_string(),
         ));
     }
+
+    // Bind the control socket before any work starts (volume ownership, mount
+    // hydration, forwarders, the child): a run that `stop`/`ps` cannot reach
+    // must not start. The guard removes `ctl.sock` on every later error return.
+    #[cfg(unix)]
+    let ctl = super::ctl::bind_ctl_listener(dir)?;
 
     let volumes = named_volumes(spec);
     let mut pending = Vec::new();
@@ -98,8 +105,8 @@ pub(super) fn supervise_native(
     #[cfg(unix)]
     return run_supervisor_loop(
         dir,
+        ctl,
         spec,
-        &cwd,
         &run_cwd,
         policy,
         health_cfg,
@@ -171,23 +178,22 @@ struct OwnerSetup<'a> {
 #[cfg(unix)]
 fn run_supervisor_loop(
     dir: &std::path::Path,
+    ctl: super::ctl::CtlListener,
     spec: &SpecOnDisk,
-    cwd: &std::path::Path,
     run_cwd: &std::path::Path,
     policy: RestartPolicy,
     health_cfg: Option<crate::healthcheck::Healthcheck>,
     owners: OwnerSetup<'_>,
 ) -> Result<i32> {
     use std::io::{BufRead, BufReader, Write};
-    use std::os::unix::net::UnixListener;
     use std::os::unix::process::ExitStatusExt;
     use std::time::{Duration, Instant};
 
-    // Forwarders + ctl endpoint live for the whole run (across re-spawns).
+    // Health probes run in the spec's cwd (not `-w`), as before.
+    let cwd = PathBuf::from(&spec.cwd);
+    // Forwarders + ctl endpoint (bound by the caller) live for the whole run
+    // (across re-spawns).
     let _forwarders = start_forwarders(dir, spec);
-    let sock_path = ctl_sock_path(dir);
-    let listener = UnixListener::bind(&sock_path).map_err(LightrError::Io)?;
-    listener.set_nonblocking(true).map_err(LightrError::Io)?;
 
     // Health state machine + monotonic launch instant (started once; `ps` shows
     // "starting" before the first probe round).
@@ -248,7 +254,7 @@ fn run_supervisor_loop(
         let exit_code = loop {
             if let Some(ref hc) = health_cfg {
                 if Instant::now() >= next_probe {
-                    let passed = crate::healthcheck::probe_once(hc, cwd);
+                    let passed = crate::healthcheck::probe_once(hc, &cwd);
                     let in_start = health_launched.elapsed().as_secs() < hc.start_period_s;
                     health_state.record(passed, in_start, hc.retries);
                     crate::healthcheck::write_state(dir, health_state.status);
@@ -262,7 +268,7 @@ fn run_supervisor_loop(
                     .unwrap_or_else(|| 128 + status.signal().unwrap_or(0));
             }
 
-            match listener.accept() {
+            match ctl.listener.accept() {
                 Ok((stream, _)) => {
                     stream.set_read_timeout(Some(Duration::from_secs(1))).ok();
                     stream.set_write_timeout(Some(Duration::from_secs(1))).ok();
@@ -334,7 +340,7 @@ fn run_supervisor_loop(
     // already said "exited" — the two disagreed. Removing the socket first means
     // once any reader observes the socket gone (→ not-running), the terminal status
     // is already (about to be) written, so the two are never contradictory.
-    let _ = std::fs::remove_file(&sock_path);
+    drop(ctl);
     write_terminal_status(dir, final_exit)?;
     for (name, _) in &owners.volumes {
         lightr_store::volume::terminal_run_owner(dir)?;

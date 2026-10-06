@@ -9,8 +9,109 @@
 use std::path::PathBuf;
 
 #[cfg(unix)]
+use lightr_core::{LightrError, Result};
+
+#[cfg(unix)]
 pub(super) fn ctl_sock_path(dir: &std::path::Path) -> PathBuf {
     dir.join("ctl.sock")
+}
+
+/// Longest `ctl.sock` path this host can bind, in bytes: `sun_path`'s size
+/// minus its NUL terminator (macOS 104 → 103, Linux 108 → 107). std's bind
+/// rejects any path of `sun_path.len()` bytes or more.
+#[cfg(unix)]
+pub(super) const CTL_SOCK_MAX_BYTES: usize = {
+    // SAFETY: `sockaddr_un` is plain old data; all-zero bytes are a valid value.
+    let addr: libc::sockaddr_un = unsafe { std::mem::zeroed() };
+    std::mem::size_of_val(&addr.sun_path) - 1
+};
+
+/// Refuse a run dir whose `ctl.sock` cannot be bound on this host. Past the
+/// limit the supervisor has no control plane, so `stop`/`ps` cannot reach the
+/// run. Callers run this before creating or launching anything for the run.
+#[cfg(unix)]
+pub(super) fn ensure_ctl_sock_fits(dir: &std::path::Path) -> Result<()> {
+    check_sock_len(&ctl_sock_path(dir), CTL_SOCK_MAX_BYTES).map_err(LightrError::InvalidRef)
+}
+
+/// Windows: the control endpoint is a named pipe (`ctl_pipe_name`), which has
+/// no `sun_path` limit, so nothing to refuse.
+#[cfg(windows)]
+pub(super) fn ensure_ctl_sock_fits(_dir: &std::path::Path) -> lightr_core::Result<()> {
+    Ok(())
+}
+
+/// The length check behind `ensure_ctl_sock_fits`, with the limit injected so
+/// tests can probe its boundary. Counts bytes, not chars: `sun_path` is bytes.
+#[cfg(unix)]
+pub(super) fn check_sock_len(
+    sock: &std::path::Path,
+    max: usize,
+) -> std::result::Result<(), String> {
+    use std::os::unix::ffi::OsStrExt;
+    let len = sock.as_os_str().as_bytes().len();
+    if len <= max {
+        return Ok(());
+    }
+    Err(format!(
+        "detached run control socket path is {len} bytes, over this host's {max}-byte \
+         AF_UNIX limit: {}; set LIGHTR_HOME to a path at least {} bytes shorter",
+        sock.display(),
+        len - max
+    ))
+}
+
+/// The run's bound control socket. Dropping it removes `ctl.sock`, so every
+/// supervisor return path (including `?` errors after the bind) leaves no
+/// stale endpoint behind. Terminal paths drop it explicitly BEFORE writing the
+/// `exited` status (FIX-#76 teardown order; see `stop::supervisor_alive`).
+#[cfg(unix)]
+pub(super) struct CtlListener {
+    pub(super) listener: std::os::unix::net::UnixListener,
+    path: PathBuf,
+}
+
+#[cfg(unix)]
+impl Drop for CtlListener {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
+/// Bind the run's control socket (non-blocking). A failure is recorded in the
+/// run dir (`stderr.log` + a terminal `exited 2` status) so `ps`/`status`/
+/// `logs` show why the run never started. Supervisors call this before they
+/// start any workload, so a failure leaves nothing running.
+#[cfg(unix)]
+pub(super) fn bind_ctl_listener(dir: &std::path::Path) -> Result<CtlListener> {
+    let path = ctl_sock_path(dir);
+    let bound = ensure_ctl_sock_fits(dir).and_then(|()| {
+        let listener = std::os::unix::net::UnixListener::bind(&path).map_err(LightrError::Io)?;
+        let ctl = CtlListener { listener, path };
+        ctl.listener
+            .set_nonblocking(true)
+            .map_err(LightrError::Io)?;
+        Ok(ctl)
+    });
+    bound.inspect_err(|e| record_setup_failure(dir, &format!("control socket: {e}")))
+}
+
+/// Exit code written to `status` when the supervisor fails before the workload
+/// starts. It matches the `__supervise` process's own exit code for an error.
+#[cfg(unix)]
+pub(super) const SETUP_FAILURE_CODE: i32 = 2;
+
+#[cfg(unix)]
+fn record_setup_failure(dir: &std::path::Path, why: &str) {
+    use std::io::Write;
+    if let Ok(mut log) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(dir.join("stderr.log"))
+    {
+        let _ = writeln!(log, "lightr: supervise error: {why}");
+    }
+    let _ = std::fs::write(dir.join("status"), format!("exited {SETUP_FAILURE_CODE}"));
 }
 
 // WIN-PATH: named-pipe address `\\.\pipe\lightr-<id>`. The id is the run dir's

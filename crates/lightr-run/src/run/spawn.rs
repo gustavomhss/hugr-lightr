@@ -86,6 +86,9 @@ pub fn create_run_prepared(
 
     let id = new_run_id();
     let dir = run_dir_for_id(&id);
+    // Refuse before the run dir exists: past the AF_UNIX limit the supervisor
+    // could not bind `ctl.sock`, so the run would be unreachable by stop/ps.
+    super::ctl::ensure_ctl_sock_fits(&dir)?;
     std::fs::create_dir_all(&dir).map_err(LightrError::Io)?;
 
     // Persist the healthcheck (if any) BEFORE forking the supervisor, so the

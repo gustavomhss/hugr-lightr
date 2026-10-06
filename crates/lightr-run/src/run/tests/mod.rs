@@ -10,6 +10,7 @@
 /// (poison-tolerant) and hold the guard for the lifetime of the test.
 pub(super) static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+mod ctl_sock;
 mod deepmemo;
 mod memo;
 mod memo_env;

@@ -158,11 +158,16 @@ pub trait GuestOps {
     /// resolves inside the guest rootfs, not the initrd.
     fn enter_rootfs(&mut self) -> std::io::Result<()>;
     /// Spawn the command, wait, return its exit code (128+signal on signal).
+    /// `pid_proof` is the released snapshot gate, present only for a
+    /// `suspend_gate` run: then, after spawn and before waiting, the workload PID
+    /// proof goes to [`WORKLOAD_PID_FILE`]. An ordinary run has no gate file, so
+    /// it must never be asked for a proof.
     fn spawn_wait(
         &mut self,
         cmd: &[String],
         cwd: &str,
         env: &[(String, String)],
+        pid_proof: Option<&SuspendGate>,
     ) -> std::io::Result<i32>;
     /// Publish the guest's primary non-loopback IPv4 to [`IP_FILE`] (container
     /// networking). Called by [`run_init`] only when [`InitSpec::net`] is true,
@@ -170,8 +175,9 @@ pub trait GuestOps {
     /// `spawn_wait` (the command may block forever as a server).
     fn publish_ip(&mut self) -> std::io::Result<()>;
     /// Fsync a guest-ready proof, then wait for the host's exact release token.
-    /// This must complete before `spawn_wait` is invoked.
-    fn await_suspend_release(&mut self) -> std::io::Result<()>;
+    /// This must complete before `spawn_wait` is invoked. Returns the validated
+    /// gate, which `spawn_wait` uses for the workload PID proof.
+    fn await_suspend_release(&mut self) -> std::io::Result<SuspendGate>;
 }
 
 /// The init lifecycle: mount rootfs → read the command → enter the rootfs →
@@ -203,13 +209,17 @@ pub fn run_init<M: GuestOps>(ops: &mut M, sink: &mut dyn ExitSink) -> std::io::R
 
     // Snapshot protocol: readiness is durable before VZ pauses, while release is
     // impossible until host validates/restores exact artifact after first payload.
-    if spec.suspend_gate {
-        ops.await_suspend_release()?;
-    }
+    let gate = if spec.suspend_gate {
+        Some(ops.await_suspend_release()?)
+    } else {
+        None
+    };
 
     // 4. Spawn and capture the REAL exit code. A spawn failure (command not
-    //    found) is still a real outcome → 127, not an Err.
-    let code = match ops.spawn_wait(&spec.command, &spec.cwd, &spec.env) {
+    //    found) is still a real outcome → 127, not an Err. Only a gated run
+    //    writes the workload PID proof (ADR-0024 D6: reading the gate file on
+    //    every run made each ordinary run report 127).
+    let code = match ops.spawn_wait(&spec.command, &spec.cwd, &spec.env, gate.as_ref()) {
         Ok(code) => code,
         Err(_) => SPAWN_FAILED_CODE,
     };
